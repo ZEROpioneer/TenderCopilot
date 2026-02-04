@@ -1,0 +1,116 @@
+# ============================================
+# TenderCopilot .gitignore
+# ============================================
+
+# 敏感配置文件
+# ============================================
+.env
+*.env.local
+*.env.*.local
+
+# 数据文件（包含爬取结果、数据库）
+# ============================================
+data/
+!data/.gitkeep
+
+# 日志文件
+# ============================================
+logs/
+*.log
+!logs/.gitkeep
+
+# 调试文件
+# ============================================
+debug/
+*.debug
+
+# Python
+# ============================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+# ============================================
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 临时文件
+# ============================================
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# 系统文件
+# ============================================
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 项目特定
+# ============================================
+# 下载的附件
+attachments/
+
+# 备份文件
+*.db.backup
+backups/
+
+# 计划文件（可选，如果包含敏感信息）
+# .cursor/plans/
