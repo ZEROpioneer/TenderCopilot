@@ -96,6 +96,26 @@ class DatabaseManager:
             )
         """)
         
+        # 创建爬取历史表（用于增量爬取）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS crawl_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                crawl_time DATETIME NOT NULL,
+                announcement_count INTEGER DEFAULT 0,
+                success INTEGER DEFAULT 1,
+                start_date TEXT,
+                end_date TEXT,
+                filters TEXT,
+                error_message TEXT
+            )
+        """)
+        
+        # 创建索引以提高查询性能
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_crawl_time 
+            ON crawl_history(crawl_time DESC)
+        """)
+        
         self.conn.commit()
         logger.info("✅ 数据库初始化完成")
     
@@ -229,6 +249,37 @@ class DatabaseManager:
         
         results = cursor.execute(query).fetchall()
         return [dict(row) for row in results]
+    
+    def execute_query(self, query, params=None):
+        """执行数据库查询
+        
+        Args:
+            query: SQL 查询语句
+            params: 查询参数
+            
+        Returns:
+            查询结果
+        """
+        cursor = self.conn.cursor()
+        
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            # 如果是 SELECT 查询，返回结果
+            if query.strip().upper().startswith('SELECT'):
+                return cursor.fetchall()
+            
+            # 否则提交事务
+            self.conn.commit()
+            return cursor.rowcount
+            
+        except Exception as e:
+            logger.error(f"❌ 执行查询失败: {e}")
+            self.conn.rollback()
+            raise
     
     def close(self):
         """关闭数据库连接"""

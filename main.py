@@ -14,6 +14,7 @@ load_dotenv()
 from src.database.storage import DatabaseManager
 from src.spider.plap_spider import PLAPSpider
 from src.spider.attachment_handler import AttachmentHandler
+from src.spider.crawl_tracker import CrawlTracker
 from src.filter.keyword_matcher import KeywordMatcher
 from src.filter.location_matcher import LocationMatcher
 from src.filter.deduplicator import Deduplicator
@@ -33,6 +34,7 @@ class TenderCopilot:
         
         # 初始化组件
         self.db = DatabaseManager(self.config['database']['path'])
+        self.crawl_tracker = CrawlTracker(self.db, self.config)
         self.spider = None
         self.attachment_handler = None
         self.keyword_matcher = None
@@ -59,10 +61,19 @@ class TenderCopilot:
         with open('config/notifications.yaml', 'r', encoding='utf-8') as f:
             notifications = yaml.safe_load(f)
         
+        # 筛选配置（新增）
+        try:
+            with open('config/filter_settings.yaml', 'r', encoding='utf-8') as f:
+                filter_settings = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.warning("⚠️ 未找到 filter_settings.yaml，将使用传统爬取模式")
+            filter_settings = {}
+        
         # 合并配置
         config = {**settings}
         config['business_directions'] = business['business_directions']
         config['global_exclude'] = business['global_exclude']
+        config['filter_settings'] = filter_settings
         config.update(notifications)
         
         # 处理环境变量
@@ -71,6 +82,11 @@ class TenderCopilot:
             config['analyzer']['api_key'] = os.getenv('GEMINI_API_KEY', '')
         elif '${OPENAI_API_KEY}' in api_key_config:
             config['analyzer']['api_key'] = os.getenv('OPENAI_API_KEY', '')
+        
+        # 处理企业微信 webhook（新增）
+        webhook_url = config.get('wechat_work', {}).get('webhook_url', '')
+        if '${WECHAT_WORK_WEBHOOK}' in webhook_url:
+            config['wechat_work']['webhook_url'] = os.getenv('WECHAT_WORK_WEBHOOK', '')
         
         return config
     
@@ -132,21 +148,71 @@ class TenderCopilot:
             if not self.spider:
                 self.init_components()
             
-            # 1. 爬取公告列表
-            logger.info("📥 步骤 1/6: 爬取招标公告列表")
-            announcements = self.spider.fetch_announcements()
+            # 1. 准备筛选条件
+            logger.info("📥 步骤 1/6: 准备爬取筛选条件")
+            
+            # 计算日期范围
+            date_range = self.crawl_tracker.get_date_range()
+            logger.info(f"  📅 日期范围: {date_range[0]} ~ {date_range[1]}")
+            
+            # 获取筛选配置
+            filter_config = self.config.get('filter_settings', {})
+            filters_enabled = filter_config.get('filters', {})
+            
+            # 公告类型
+            notice_types = None
+            if filters_enabled.get('notice_types', {}).get('enabled'):
+                notice_types = filters_enabled['notice_types'].get('types', [])
+                logger.info(f"  📋 公告类型: {', '.join(notice_types)}")
+            
+            # 地区
+            regions = None
+            if filters_enabled.get('regions', {}).get('enabled'):
+                priority_regions = filters_enabled['regions'].get('priority', [])
+                included_regions = filters_enabled['regions'].get('included', [])
+                
+                regions = []
+                # 优先地区
+                for r in priority_regions:
+                    regions.append(r['name'])
+                    if r.get('include_cities') and r.get('cities'):
+                        regions.extend(r['cities'])
+                # 其他关注地区
+                regions.extend(included_regions)
+                
+                logger.info(f"  📍 关注地区: {', '.join(regions[:5])}{'...' if len(regions) > 5 else ''}")
+            
+            # 最大结果数
+            max_results = filter_config.get('crawl_strategy', {}).get('max_results_per_request', 50)
+            
+            # 2. 使用筛选条件爬取
+            logger.info("📥 步骤 2/6: 使用筛选条件爬取公告")
+            announcements = self.spider.fetch_by_filters(
+                date_range=date_range,
+                notice_types=notice_types,
+                regions=regions,
+                max_results=max_results,
+                use_api=True  # 优先使用 API
+            )
             logger.info(f"✅ 爬取到 {len(announcements)} 条公告")
+            
+            # 记录爬取历史
+            self.crawl_tracker.record_crawl(len(announcements), success=True)
             
             if not announcements:
                 logger.warning("⚠️ 未爬取到任何公告，流程结束")
                 return
             
-            # 2. 获取公告详情（可选：只获取前N个以加快速度）
-            logger.info("📄 步骤 2/6: 获取公告详情内容")
-            max_details = self.config['spider'].get('max_fetch_details', 50)
-            for i, ann in enumerate(announcements[:max_details]):
+            # 3. 获取详情内容（针对需要完整内容分析的公告）
+            logger.info("📄 步骤 3/6: 获取公告详情内容")
+            for i, ann in enumerate(announcements):
+                # 如果 API 已返回内容，跳过
+                if ann.get('content'):
+                    logger.debug(f"  ⏭️ [{i+1}/{len(announcements)}] 已有内容: {ann['title'][:40]}...")
+                    continue
+                
                 try:
-                    logger.info(f"  [{i+1}/{min(len(announcements), max_details)}] 获取: {ann['title'][:40]}...")
+                    logger.info(f"  📖 [{i+1}/{len(announcements)}] 获取: {ann['title'][:40]}...")
                     detail = self.spider.fetch_detail(ann['url'])
                     if detail:
                         ann['content'] = detail.get('content', '')
@@ -155,8 +221,8 @@ class TenderCopilot:
                     logger.warning(f"  ⚠️ 获取详情失败: {e}")
                     continue
             
-            # 3. 筛选项目
-            logger.info("🔍 步骤 3/6: 筛选匹配项目")
+            # 4. 筛选项目
+            logger.info("🔍 步骤 4/6: 筛选匹配项目")
             logger.info(f"💡 开始关键词匹配（业务方向：文化氛围、数字史馆、仿真训练、院线电影）")
             filtered = self.filter_announcements(announcements)
             logger.info(f"✅ 筛选出 {len(filtered)} 个匹配项目")
@@ -165,16 +231,16 @@ class TenderCopilot:
                 logger.warning("⚠️ 未找到匹配项目，流程结束")
                 return
             
-            # 4. AI 分析（如果启用）
+            # 5. AI 分析（如果启用）
             if self.analyzer:
-                logger.info("🤖 步骤 4/6: AI 分析项目信息")
+                logger.info("🤖 步骤 5/6: AI 分析项目信息")
                 for project in filtered:
                     self.analyze_project(project)
             else:
-                logger.info("⏭️ 步骤 4/6: 跳过 AI 分析")
+                logger.info("⏭️ 步骤 5/6: 跳过 AI 分析")
             
-            # 5. 生成报告
-            logger.info("📝 步骤 5/6: 生成分析报告")
+            # 6. 生成报告
+            logger.info("📝 步骤 6/6: 生成分析报告")
             stats = {
                 'total_crawled': len(announcements),
                 'total_matched': len(filtered),
@@ -184,9 +250,19 @@ class TenderCopilot:
             }
             report = self.reporter.generate_daily_report(filtered, stats)
             
-            # 6. 推送通知
-            logger.info("📤 步骤 6/6: 推送通知")
+            # 推送通知
+            logger.info("📤 推送通知")
             self.notification_manager.send_report(report, filtered)
+            
+            # 显示爬取统计
+            crawl_stats = self.crawl_tracker.get_statistics()
+            logger.info("=" * 60)
+            logger.info("📊 爬取统计信息")
+            logger.info(f"  总爬取次数: {crawl_stats.get('total_crawls', 0)}")
+            logger.info(f"  成功率: {crawl_stats.get('success_rate', 'N/A')}")
+            logger.info(f"  今日爬取: {crawl_stats.get('today_crawls', 0)} 次")
+            logger.info(f"  上次爬取: {crawl_stats.get('last_crawl_time', 'N/A')}")
+            logger.info("=" * 60)
             
             logger.success("✅ 流程执行完成")
             

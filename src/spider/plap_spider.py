@@ -374,6 +374,52 @@ class PLAPSpider:
         delay = random.uniform(delay_range[0], delay_range[1])
         time.sleep(delay)
     
+    def fetch_by_filters(
+        self,
+        date_range=None,
+        notice_types=None,
+        regions=None,
+        max_results=50,
+        use_api=True
+    ):
+        """使用筛选条件爬取公告
+        
+        Args:
+            date_range: 日期范围 (start_date, end_date)
+            notice_types: 公告类型列表
+            regions: 地区列表
+            max_results: 最大结果数
+            use_api: 是否使用 API（推荐）
+            
+        Returns:
+            公告列表
+        """
+        logger.info("🎯 开始使用筛选条件爬取公告")
+        
+        if use_api:
+            # 使用 API 客户端（推荐方式）
+            from .api_client import PLAPApiClient
+            
+            try:
+                api_client = PLAPApiClient(self.config)
+                announcements = api_client.fetch_announcements(
+                    date_range=date_range,
+                    notice_types=notice_types,
+                    regions=regions,
+                    max_results=max_results
+                )
+                api_client.close()
+                return announcements
+            except Exception as e:
+                logger.error(f"❌ API 爬取失败: {e}")
+                logger.warning("⚠️ 切换到传统爬取模式")
+                use_api = False
+        
+        if not use_api:
+            # 降级到传统爬取方式
+            logger.info("🔄 使用传统爬取模式")
+            return self.fetch_announcements()
+    
     def close(self):
         """关闭浏览器"""
         if self.page:
