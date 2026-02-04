@@ -63,6 +63,34 @@ analyzer:
   timeout: 30
   retry_times: 3
   fallback_to_rules: true  # API失败时降级到规则提取
+
+# 深度分析配置（新增）
+deep_analysis:
+  enabled: true
+  analyze_content: true      # 内容相关度分析
+  analyze_attachments: true  # 附件分析
+  extract_ai: true           # AI信息提取
+  
+  # 附件处理
+  download_attachments_for_analysis: true  # 只下载需要分析的附件
+  analyze_pdf: true
+  analyze_docx: true
+  max_attachment_size: 20    # MB
+
+# 评分配置（新增）
+scoring:
+  min_total_score: 60        # 最低推送分数
+  min_relevance_score: 40    # 最低相关度
+  min_deadline_days: 3       # 最少投标准备天数
+  
+  # 分数权重（仅供参考，已在代码中定义）
+  weights:
+    keyword_match: 20        # 关键词匹配
+    content_relevance: 25    # 内容相关度
+    ai_completeness: 20      # AI提取完整性
+    attachment_quality: 15   # 附件质量
+    deadline_adequacy: 10    # 时间充足度
+    location_bonus: 10       # 地域加分（额外）
   
 # 报告生成配置
 reporter:

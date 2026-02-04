@@ -69,11 +69,21 @@ class TenderCopilot:
             logger.warning("⚠️ 未找到 filter_settings.yaml，将使用传统爬取模式")
             filter_settings = {}
         
+        # 搜索关键词配置（新增）
+        try:
+            with open('config/search_keywords.yaml', 'r', encoding='utf-8') as f:
+                search_config = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.warning("⚠️ 未找到 search_keywords.yaml，使用默认配置")
+            search_config = {}
+        
         # 合并配置
         config = {**settings}
         config['business_directions'] = business['business_directions']
         config['global_exclude'] = business['global_exclude']
         config['filter_settings'] = filter_settings
+        config['search_keywords'] = search_config.get('search_keywords', {})
+        config['crawl_strategy'] = search_config.get('crawl_strategy', {})
         config.update(notifications)
         
         # 处理环境变量
@@ -131,16 +141,23 @@ class TenderCopilot:
         else:
             logger.warning("⚠️ 未配置 API Key，AI 分析功能将不可用")
         
-        self.scorer = FeasibilityScorer()
+        # 新增分析器
+        from src.analyzer.content_analyzer import ContentAnalyzer
+        from src.analyzer.attachment_analyzer import AttachmentAnalyzer
+        
+        self.content_analyzer = ContentAnalyzer(self.config)
+        self.attachment_analyzer = AttachmentAnalyzer(self.config)
+        
+        self.scorer = FeasibilityScorer(self.config)
         self.reporter = MarkdownReporter()
         self.notification_manager = NotificationManager(self.config)
         
         logger.success("✅ 组件初始化完成")
     
     def run_pipeline(self):
-        """执行完整流程"""
+        """执行完整流程（新的增量搜索模式）"""
         logger.info("=" * 60)
-        logger.info("🚀 TenderCopilot 开始运行")
+        logger.info("🚀 TenderCopilot 开始运行（增量搜索模式）")
         logger.info("=" * 60)
         
         try:
@@ -148,113 +165,81 @@ class TenderCopilot:
             if not self.spider:
                 self.init_components()
             
-            # 1. 准备筛选条件
-            logger.info("📥 步骤 1/6: 准备爬取筛选条件")
+            # 步骤1: 获取上次爬取时间
+            logger.info("📅 步骤 1/7: 计算增量爬取时间窗口")
+            from datetime import datetime
+            last_crawl_time = self.crawl_tracker.get_last_crawl_time()
+            logger.info(f"  上次爬取: {last_crawl_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"  本次爬取: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"  时间间隔: {((datetime.now() - last_crawl_time).total_seconds() / 3600):.1f} 小时")
             
-            # 计算日期范围
-            date_range = self.crawl_tracker.get_date_range()
-            logger.info(f"  📅 日期范围: {date_range[0]} ~ {date_range[1]}")
+            # 步骤2: 准备搜索关键词
+            logger.info("🔑 步骤 2/7: 准备搜索关键词")
+            keywords = self._get_search_keywords()
+            logger.info(f"  共 {len(keywords)} 个关键词: {', '.join(keywords[:5])}...")
             
-            # 获取筛选配置
-            filter_config = self.config.get('filter_settings', {})
-            filters_enabled = filter_config.get('filters', {})
+            # 步骤3: 逐个关键词搜索爬取（增量模式）
+            logger.info("📥 步骤 3/7: 逐个关键词搜索爬取")
+            all_announcements = []
+            for i, keyword in enumerate(keywords, 1):
+                logger.info(f"  🔍 [{i}/{len(keywords)}] 搜索: '{keyword}'")
+                results = self.spider.search_by_keyword(
+                    keyword=keyword,
+                    last_crawl_time=last_crawl_time,
+                    db_manager=self.db,
+                    max_results=self.config.get('crawl_strategy', {}).get('max_per_keyword', 200)
+                )
+                all_announcements.extend(results)
+                logger.info(f"     获取 {len(results)} 条新公告")
             
-            # 公告类型
-            notice_types = None
-            if filters_enabled.get('notice_types', {}).get('enabled'):
-                notice_types = filters_enabled['notice_types'].get('types', [])
-                logger.info(f"  📋 公告类型: {', '.join(notice_types)}")
+            logger.info(f"✅ 搜索完成，共获取 {len(all_announcements)} 条新公告")
             
-            # 地区
-            regions = None
-            if filters_enabled.get('regions', {}).get('enabled'):
-                priority_regions = filters_enabled['regions'].get('priority', [])
-                included_regions = filters_enabled['regions'].get('included', [])
-                
-                regions = []
-                # 优先地区
-                for r in priority_regions:
-                    regions.append(r['name'])
-                    if r.get('include_cities') and r.get('cities'):
-                        regions.extend(r['cities'])
-                # 其他关注地区
-                regions.extend(included_regions)
-                
-                logger.info(f"  📍 关注地区: {', '.join(regions[:5])}{'...' if len(regions) > 5 else ''}")
+            # 记录爬取历史并更新时间
+            self.crawl_tracker.record_crawl(len(all_announcements), success=True)
+            self.crawl_tracker.update_last_crawl_time()
             
-            # 最大结果数
-            max_results = filter_config.get('crawl_strategy', {}).get('max_results_per_request', 50)
-            
-            # 2. 使用筛选条件爬取
-            logger.info("📥 步骤 2/6: 使用筛选条件爬取公告")
-            announcements = self.spider.fetch_by_filters(
-                date_range=date_range,
-                notice_types=notice_types,
-                regions=regions,
-                max_results=max_results,
-                use_api=True  # 优先使用 API
-            )
-            logger.info(f"✅ 爬取到 {len(announcements)} 条公告")
-            
-            # 记录爬取历史
-            self.crawl_tracker.record_crawl(len(announcements), success=True)
-            
-            if not announcements:
-                logger.warning("⚠️ 未爬取到任何公告，流程结束")
+            if not all_announcements:
+                logger.warning("⚠️ 未爬取到任何新公告，流程结束")
                 return
             
-            # 3. 获取详情内容（针对需要完整内容分析的公告）
-            logger.info("📄 步骤 3/6: 获取公告详情内容")
-            for i, ann in enumerate(announcements):
-                # 如果 API 已返回内容，跳过
-                if ann.get('content'):
-                    logger.debug(f"  ⏭️ [{i+1}/{len(announcements)}] 已有内容: {ann['title'][:40]}...")
-                    continue
-                
-                try:
-                    logger.info(f"  📖 [{i+1}/{len(announcements)}] 获取: {ann['title'][:40]}...")
-                    detail = self.spider.fetch_detail(ann['url'])
-                    if detail:
-                        ann['content'] = detail.get('content', '')
-                        ann['attachments'] = detail.get('attachments', [])
-                except Exception as e:
-                    logger.warning(f"  ⚠️ 获取详情失败: {e}")
-                    continue
-            
-            # 4. 筛选项目
-            logger.info("🔍 步骤 4/6: 筛选匹配项目")
-            logger.info(f"💡 开始关键词匹配（业务方向：文化氛围、数字史馆、仿真训练、院线电影）")
-            filtered = self.filter_announcements(announcements)
+            # 步骤4: 初步筛选（关键词+地域）
+            logger.info("🔍 步骤 4/7: 初步筛选（关键词匹配+地域检查）")
+            filtered = self.filter_announcements(all_announcements)
             logger.info(f"✅ 筛选出 {len(filtered)} 个匹配项目")
             
             if not filtered:
                 logger.warning("⚠️ 未找到匹配项目，流程结束")
                 return
             
-            # 5. AI 分析（如果启用）
-            if self.analyzer:
-                logger.info("🤖 步骤 5/6: AI 分析项目信息")
-                for project in filtered:
-                    self.analyze_project(project)
-            else:
-                logger.info("⏭️ 步骤 5/6: 跳过 AI 分析")
+            # 步骤5: 深度分析（只分析通过初筛的项目）
+            logger.info("🤖 步骤 5/7: 深度分析（内容+AI+附件）")
+            self.deep_analyze_projects(filtered)
             
-            # 6. 生成报告
-            logger.info("📝 步骤 6/6: 生成分析报告")
+            # 步骤6: 二次过滤（只保留高质量项目）
+            logger.info("🎯 步骤 6/7: 二次过滤（评分>=60分）")
+            high_quality = [p for p in filtered if p['feasibility'].get('passes_filter', False)]
+            logger.info(f"✅ 筛选出 {len(high_quality)} 个高质量项目（评分>=60）")
+            
+            if not high_quality:
+                logger.warning("⚠️ 没有高质量项目，跳过推送")
+                return
+            
+            # 步骤7: 生成报告并推送
+            logger.info("📝 步骤 7/7: 生成报告并推送通知")
             stats = {
-                'total_crawled': len(announcements),
+                'total_crawled': len(all_announcements),
                 'total_matched': len(filtered),
-                'high_priority': sum(1 for p in filtered if p['feasibility']['total'] >= 80),
-                'medium_priority': sum(1 for p in filtered if 60 <= p['feasibility']['total'] < 80),
-                'low_priority': sum(1 for p in filtered if p['feasibility']['total'] < 60)
+                'high_quality': len(high_quality),
+                'excellent': sum(1 for p in high_quality if p['feasibility']['total'] >= 80),
+                'good': sum(1 for p in high_quality if 60 <= p['feasibility']['total'] < 80)
             }
-            report = self.reporter.generate_daily_report(filtered, stats)
+            report = self.reporter.generate_daily_report(high_quality, stats)
             
             # 推送通知
             logger.info("📤 推送通知")
-            self.notification_manager.send_report(report, filtered)
+            self.notification_manager.send_report(report, high_quality)
             
-            # 显示爬取统计
+            # 显示统计
             crawl_stats = self.crawl_tracker.get_statistics()
             logger.info("=" * 60)
             logger.info("📊 爬取统计信息")
@@ -274,67 +259,177 @@ class TenderCopilot:
             if self.spider:
                 self.spider.close()
     
+    def _get_search_keywords(self):
+        """获取搜索关键词列表
+        
+        Returns:
+            关键词列表
+        """
+        keywords = []
+        search_keywords_config = self.config.get('search_keywords', {})
+        
+        # 从配置文件获取所有业务方向的关键词
+        for direction_id, direction_keywords in search_keywords_config.items():
+            if isinstance(direction_keywords, list):
+                keywords.extend(direction_keywords)
+        
+        # 如果配置为空，使用业务方向的关键词
+        if not keywords:
+            for direction_id, direction_config in self.config['business_directions'].items():
+                keywords.extend(direction_config.get('keywords_include', []))
+        
+        # 去重
+        keywords = list(set(keywords))
+        
+        return keywords
+    
     def filter_announcements(self, announcements):
-        """筛选公告"""
+        """初步筛选公告（关键词+地域）"""
         filtered = []
         
         for ann in announcements:
-            # 关键词匹配
+            # 1. 关键词匹配
             match_results = self.keyword_matcher.match(ann)
             if not match_results:
                 continue
             
-            # 获取最佳匹配方向
+            # 2. 获取最佳匹配方向
             best_direction_id = max(match_results.keys(), key=lambda k: match_results[k]['score'])
             best_direction = match_results[best_direction_id]
+            direction_config = self.config['business_directions'][best_direction_id]
             
-            # 地域匹配
+            # 3. 地域匹配检查
             location_result = self.location_matcher.match(
                 ann, 
                 best_direction_id,
-                self.config['business_directions'][best_direction_id]
+                direction_config
             )
             
+            # 如果地域要求不通过，跳过
             if not location_result['matched']:
-                logger.info(f"⏭️ 跳过（地域不符）: {ann['title']}")
+                logger.info(f"⏭️ 跳过（地域不符-{direction_config['name']}）: {ann['title'][:50]}...")
                 continue
             
-            # 去重
+            # 4. 去重
             if self.deduplicator.is_duplicate(ann):
-                logger.info(f"⏭️ 跳过（重复）: {ann['title']}")
+                logger.debug(f"⏭️ 跳过（重复）: {ann['title'][:50]}...")
                 continue
             
-            # 计算可行性评分
-            feasibility = self.scorer.calculate(ann, match_results, location_result)
-            
-            # 保存到数据库
+            # 5. 保存到数据库
             self.db.save_announcement(ann)
-            self.db.save_filtered_project(ann['id'], match_results, feasibility)
             
-            # 添加到结果
+            # 6. 添加到结果（暂时不计算评分，等深度分析后再计算）
             filtered.append({
                 'announcement': ann,
-                'matched_directions': [best_direction],
-                'feasibility': feasibility
+                'matched_direction_id': best_direction_id,
+                'match_results': match_results,
+                'location_result': location_result
             })
             
-            logger.success(f"✅ 通过筛选: {ann['title']} (评分: {feasibility['total']})")
+            logger.info(f"✅ 通过初筛: {ann['title'][:50]}... ({direction_config['name']})")
         
         return filtered
     
-    def analyze_project(self, project):
-        """分析项目"""
-        ann = project['announcement']
+    def deep_analyze_projects(self, projects):
+        """深度分析项目（内容+AI+附件+评分）
         
-        # 准备内容
-        content = f"{ann['title']}\n\n{ann.get('content', '')}"
+        Args:
+            projects: 项目列表
+        """
+        deep_analysis_enabled = self.config.get('deep_analysis', {}).get('enabled', True)
         
-        # AI 提取
-        extracted = self.analyzer.extract(content[:12000])  # 限制长度
-        
-        if extracted:
-            project['analysis'] = extracted
-            self.db.save_analysis_result(ann['id'], extracted, 0.8)
+        for i, project in enumerate(projects, 1):
+            ann = project['announcement']
+            direction_id = project['matched_direction_id']
+            direction_config = self.config['business_directions'][direction_id]
+            
+            logger.info(f"  📊 [{i}/{len(projects)}] 分析: {ann['title'][:40]}...")
+            
+            # 1. 获取详情内容
+            detail_content = ''
+            if not ann.get('content'):
+                try:
+                    detail = self.spider.fetch_detail(ann['url'])
+                    if detail:
+                        ann['content'] = detail.get('content', '')
+                        ann['attachments'] = detail.get('attachments', [])
+                        detail_content = ann['content']
+                except Exception as e:
+                    logger.warning(f"     ⚠️ 获取详情失败: {e}")
+            else:
+                detail_content = ann.get('content', '')
+            
+            # 2. 内容相关度分析
+            content_analysis = None
+            if deep_analysis_enabled and self.config.get('deep_analysis', {}).get('analyze_content', True):
+                try:
+                    content_analysis = self.content_analyzer.analyze_relevance(
+                        ann,
+                        direction_config,
+                        detail_content
+                    )
+                    logger.debug(f"     内容相关度: {content_analysis['score']}/100")
+                except Exception as e:
+                    logger.warning(f"     ⚠️ 内容分析失败: {e}")
+            
+            # 3. AI提取结构化信息
+            ai_extracted = None
+            if self.analyzer and deep_analysis_enabled and self.config.get('deep_analysis', {}).get('extract_ai', True):
+                try:
+                    content = f"{ann['title']}\n\n{detail_content}"
+                    ai_extracted = self.analyzer.extract(content[:12000])
+                    logger.debug(f"     AI提取: 完成")
+                except Exception as e:
+                    logger.warning(f"     ⚠️ AI提取失败: {e}")
+            
+            # 4. 附件分析
+            attachment_analysis = None
+            if deep_analysis_enabled and self.config.get('deep_analysis', {}).get('analyze_attachments', True):
+                attachments = ann.get('attachments', [])
+                if attachments:
+                    try:
+                        # 下载第一个附件并分析
+                        att = attachments[0]
+                        filepath = self.attachment_handler.download(att)
+                        if filepath:
+                            keywords = direction_config.get('keywords_include', [])
+                            attachment_analysis = self.attachment_analyzer.analyze(
+                                filepath,
+                                keywords,
+                                direction_config
+                            )
+                            logger.debug(f"     附件分析: {attachment_analysis['relevance_score']}/100")
+                    except Exception as e:
+                        logger.warning(f"     ⚠️ 附件分析失败: {e}")
+            
+            # 5. 综合评分
+            feasibility = self.scorer.calculate(
+                ann,
+                project['match_results'],
+                project['location_result'],
+                content_analysis=content_analysis,
+                ai_extracted=ai_extracted,
+                attachment_analysis=attachment_analysis,
+                direction_id=direction_id
+            )
+            
+            # 保存结果
+            project['feasibility'] = feasibility
+            project['content_analysis'] = content_analysis
+            project['ai_extracted'] = ai_extracted
+            project['attachment_analysis'] = attachment_analysis
+            
+            # 保存到数据库
+            self.db.save_filtered_project(ann['id'], project['match_results'], feasibility)
+            if ai_extracted:
+                self.db.save_analysis_result(ann['id'], ai_extracted, 0.8)
+            
+            # 显示评分
+            score_info = f"{feasibility['total']}/100 ({feasibility['level']})"
+            if feasibility.get('passes_filter'):
+                logger.success(f"     ✅ 评分: {score_info}")
+            else:
+                logger.info(f"     ⚠️ 评分: {score_info} (未通过二次过滤)")
     
     def start_scheduler(self):
         """启动定时任务"""

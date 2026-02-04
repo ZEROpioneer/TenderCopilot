@@ -174,21 +174,48 @@ class PLAPApiClient:
         url = f"{self.base_url}{self.endpoint}"
         
         try:
+            logger.debug(f"📡 API 请求: {url}")
+            logger.debug(f"📝 请求参数: {params}")
+            
             response = self.session.post(
                 url,
                 data=params,
                 timeout=self.timeout
             )
+            
+            logger.debug(f"📊 响应状态码: {response.status_code}")
+            
             response.raise_for_status()
             
-            data = response.json()
-            return data
+            # 尝试解析 JSON
+            try:
+                data = response.json()
+                logger.debug(f"✅ JSON 解析成功，数据keys: {data.keys() if isinstance(data, dict) else 'not dict'}")
+                return data
+            except ValueError:
+                # 如果不是 JSON，记录原始内容
+                logger.warning(f"⚠️ 响应不是 JSON 格式")
+                logger.debug(f"响应内容: {response.text[:500]}")
+                return None
             
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"❌ HTTP 错误: {e}")
+            logger.error(f"   URL: {url}")
+            logger.error(f"   状态码: {response.status_code}")
+            logger.debug(f"   响应内容: {response.text[:500]}")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"❌ 连接错误: {e}")
+            logger.error(f"   URL: {url}")
+            return None
+        except requests.exceptions.Timeout as e:
+            logger.error(f"❌ 请求超时: {e}")
+            logger.error(f"   URL: {url}")
+            logger.error(f"   超时时间: {self.timeout}秒")
+            return None
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ API 请求失败: {e}")
-            return None
-        except ValueError as e:
-            logger.error(f"❌ JSON 解析失败: {e}")
+            logger.error(f"   URL: {url}")
             return None
     
     def _parse_api_response(self, data: Dict) -> List[Dict]:
@@ -364,6 +391,43 @@ class PLAPApiClient:
                 logger.warning(f"⚠️ 未找到地区代码: {region}")
         
         return codes
+    
+    def test_endpoint(self, endpoint: str, params: Dict[str, Any] = None) -> bool:
+        """测试指定的 API 端点
+        
+        Args:
+            endpoint: API 端点路径
+            params: 测试参数（可选）
+            
+        Returns:
+            是否成功
+        """
+        logger.info(f"🧪 测试 API 端点: {endpoint}")
+        
+        # 临时保存原端点
+        original_endpoint = self.endpoint
+        self.endpoint = endpoint
+        
+        try:
+            # 使用简单的测试参数
+            test_params = params or {
+                'pageNo': 1,
+                'pageSize': 10
+            }
+            
+            result = self._request_api(test_params)
+            
+            if result:
+                logger.success(f"✅ 端点测试成功: {endpoint}")
+                logger.info(f"   响应数据结构: {result.keys() if isinstance(result, dict) else type(result)}")
+                return True
+            else:
+                logger.error(f"❌ 端点测试失败: {endpoint}")
+                return False
+                
+        finally:
+            # 恢复原端点
+            self.endpoint = original_endpoint
     
     def close(self):
         """关闭会话"""

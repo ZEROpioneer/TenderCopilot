@@ -1,0 +1,39 @@
+# 搜索关键词配置
+# 用于军队采购网的关键词搜索
+
+search_keywords:
+  cultural_atmosphere:
+    - "文化墙"
+    - "文化氛围"
+    - "宣传栏"
+    - "文化建设"
+    
+  digital_hall:
+    - "数字史馆"
+    - "数字展馆"
+    - "史馆建设"
+    - "虚拟展馆"
+    
+  simulation_training:
+    - "VR训练"
+    - "AR仿真"
+    - "虚拟仿真"
+    - "模拟训练系统"
+    - "仿真系统"
+    
+  cinema_service:
+    - "院线电影"
+    - "军队影院"
+    - "电影放映"
+    - "影院服务"
+
+# 爬取策略（针对每天4次的高频爬取优化）
+crawl_strategy:
+  # 增量爬取配置
+  use_incremental: true          # 使用增量模式（从上次爬取时间开始）
+  enable_db_dedup: true          # 启用数据库去重
+  initial_hours: 24              # 首次运行时爬取最近N小时（保守起见）
+  
+  # 完整爬取
+  max_per_keyword: 200           # 每个关键词最多爬取数量（保护性上限）
+  # 不使用智能停止：只要在时间范围内且符合关键词，就全部爬取

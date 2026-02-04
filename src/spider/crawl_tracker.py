@@ -24,41 +24,49 @@ class CrawlTracker:
         
         logger.info("✅ 爬取追踪器初始化成功")
     
-    def get_date_range(self) -> Tuple[str, str]:
-        """根据爬取策略计算日期范围
+    def get_last_crawl_time(self) -> datetime:
+        """获取上次爬取时间（用于增量爬取）
         
         Returns:
-            (start_date, end_date) 格式: 'YYYY-MM-DD'
+            上次爬取时间，如果是首次运行则返回24小时前
         """
         last_crawl = self._get_last_crawl_time()
         
         if not last_crawl:
-            # 首次运行：使用配置的初始天数
-            days = self.crawl_strategy.get('initial_days', 3)
-            start_date = datetime.now() - timedelta(days=days)
-            logger.info(f"🆕 首次运行，爬取最近 {days} 天的公告")
+            # 首次运行：返回24小时前（保守起见）
+            default_hours = self.crawl_strategy.get('initial_hours', 24)
+            last_crawl = datetime.now() - timedelta(hours=default_hours)
+            logger.info(f"🆕 首次运行，爬取最近 {default_hours} 小时的公告")
         else:
-            # 检查是否需要完整爬取
             hours_since_last = (datetime.now() - last_crawl).total_seconds() / 3600
-            threshold = self.crawl_strategy.get('incremental', {}).get('full_crawl_threshold', 24)
-            
-            if hours_since_last > threshold:
-                # 超过阈值，执行完整爬取
-                days = self.crawl_strategy.get('initial_days', 3)
-                start_date = datetime.now() - timedelta(days=days)
-                logger.warning(f"⚠️ 距上次爬取已 {hours_since_last:.1f} 小时，执行完整爬取（{days} 天）")
-            else:
-                # 增量爬取：从上次爬取时间开始，加上重叠时间
-                overlap_hours = self.crawl_strategy.get('incremental', {}).get('overlap_hours', 1)
-                start_date = last_crawl - timedelta(hours=overlap_hours)
-                logger.info(f"🔄 增量爬取，从 {start_date.strftime('%Y-%m-%d %H:%M')} 开始（含 {overlap_hours} 小时重叠）")
+            logger.info(f"🔄 增量爬取，距上次爬取 {hours_since_last:.1f} 小时")
         
+        return last_crawl
+    
+    def get_date_range(self) -> Tuple[str, str]:
+        """根据爬取策略计算日期范围（用于API调用）
+        
+        Returns:
+            (start_date, end_date) 格式: 'YYYY-MM-DD'
+        """
+        last_crawl = self.get_last_crawl_time()
         end_date = datetime.now()
         
         return (
-            start_date.strftime('%Y-%m-%d'),
+            last_crawl.strftime('%Y-%m-%d'),
             end_date.strftime('%Y-%m-%d')
         )
+    
+    def update_last_crawl_time(self, crawl_time: datetime = None):
+        """更新爬取时间记录
+        
+        Args:
+            crawl_time: 爬取时间，默认为当前时间
+        """
+        if crawl_time is None:
+            crawl_time = datetime.now()
+        
+        logger.info(f"📝 更新爬取时间: {crawl_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     def record_crawl(self, count: int, success: bool = True):
         """记录本次爬取

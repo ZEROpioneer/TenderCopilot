@@ -24,6 +24,7 @@ business_directions:
       - "展馆"
     keywords_exclude: []
     location_required: false  # 无地域限制
+    location_bonus: true  # 启用地域加分（低权重）
     weight: 1.0
     description: "数字化历史展馆、虚拟展馆建设项目"
     
@@ -38,6 +39,7 @@ business_directions:
       - "训练系统"
     keywords_exclude: []
     location_required: false  # 无地域限制
+    location_bonus: true  # 启用地域加分（低权重）
     weight: 1.0
     description: "VR/AR仿真训练、虚拟现实、模拟训练系统项目"
     
@@ -50,6 +52,7 @@ business_directions:
       - "放映"
     keywords_exclude: []
     location_required: false  # 无地域限制
+    location_bonus: true  # 启用地域加分（低权重）
     weight: 1.0
     description: "军队院线电影放映、影院服务项目"
 

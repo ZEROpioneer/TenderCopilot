@@ -374,6 +374,244 @@ class PLAPSpider:
         delay = random.uniform(delay_range[0], delay_range[1])
         time.sleep(delay)
     
+    def search_by_keyword(
+        self,
+        keyword: str,
+        last_crawl_time: datetime,
+        db_manager,
+        max_results: int = 200
+    ):
+        """使用网站搜索框搜索关键词（支持增量爬取）
+        
+        Args:
+            keyword: 搜索关键词
+            last_crawl_time: 上次爬取时间
+            db_manager: 数据库管理器（用于去重）
+            max_results: 最多返回结果数（保护性上限）
+            
+        Returns:
+            公告列表（已去重）
+        """
+        logger.info(f"🔍 搜索关键词: '{keyword}'")
+        logger.info(f"   时间范围: {last_crawl_time.strftime('%Y-%m-%d %H:%M')} → 现在")
+        
+        if not self.page:
+            if not self.init_browser():
+                return []
+        
+        announcements = []
+        
+        try:
+            # 访问列表页
+            self.page.get(self.list_url)
+            time.sleep(2)
+            
+            # 查找搜索框并输入关键词
+            search_success = self._perform_search(keyword)
+            if not search_success:
+                logger.warning(f"⚠️ 未找到搜索框或搜索失败")
+                return []
+            
+            # 解析搜索结果（支持翻页）
+            page_num = 1
+            found_old_announcement = False
+            
+            while page_num <= 10 and not found_old_announcement:  # 最多爬10页
+                logger.info(f"   📄 解析第 {page_num} 页...")
+                
+                # 等待页面加载
+                time.sleep(2)
+                
+                # 查找公告列表项
+                items = self._find_announcement_items()
+                if not items:
+                    logger.info(f"   ⚠️ 第 {page_num} 页没有找到公告，停止")
+                    break
+                
+                page_count = 0
+                for item in items:
+                    if len(announcements) >= max_results:
+                        logger.info(f"   ⚠️ 已达到最大结果数 {max_results}，停止")
+                        found_old_announcement = True
+                        break
+                    
+                    try:
+                        announcement = self._parse_list_item(item)
+                        if not announcement:
+                            continue
+                        
+                        # 检查时间：如果早于上次爬取时间，停止
+                        pub_date = self._parse_date(announcement['pub_date'])
+                        if pub_date and pub_date <= last_crawl_time:
+                            logger.info(f"   ⏰ 发现旧公告（{announcement['pub_date']}），停止爬取")
+                            found_old_announcement = True
+                            break
+                        
+                        # 数据库去重
+                        if db_manager.exists(announcement['id']):
+                            logger.debug(f"   ⏭️ 跳过重复: {announcement['title'][:30]}...")
+                            continue
+                        
+                        announcements.append(announcement)
+                        page_count += 1
+                        logger.info(f"   ✅ [{len(announcements)}] {announcement['title'][:50]}...")
+                        
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ 解析公告项失败: {e}")
+                        continue
+                
+                logger.info(f"   第 {page_num} 页: 获取 {page_count} 条新公告")
+                
+                if found_old_announcement:
+                    break
+                
+                # 尝试翻页
+                if not self._goto_next_page():
+                    logger.info(f"   ⏹️ 没有下一页，停止")
+                    break
+                
+                page_num += 1
+            
+            logger.success(f"✅ 关键词 '{keyword}' 搜索完成，获取 {len(announcements)} 条新公告")
+            
+        except Exception as e:
+            logger.error(f"❌ 搜索失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+        
+        return announcements
+    
+    def _perform_search(self, keyword: str) -> bool:
+        """执行搜索操作
+        
+        Args:
+            keyword: 搜索关键词
+            
+        Returns:
+            True: 搜索成功
+            False: 搜索失败
+        """
+        try:
+            # 尝试多种搜索框选择器
+            search_selectors = [
+                ('css:input[type="text"][name*="search"]', '按name查找'),
+                ('css:input[type="text"][placeholder*="搜索"]', '按placeholder查找'),
+                ('css:input[type="text"][placeholder*="关键"]', '按placeholder查找'),
+                ('css:.search-input', '按class查找'),
+                ('css:#searchInput', '按ID查找'),
+                ('css:input[type="text"]', '通用文本输入框'),
+            ]
+            
+            search_box = None
+            for selector, desc in search_selectors:
+                try:
+                    search_box = self.page.ele(selector, timeout=1)
+                    if search_box:
+                        logger.info(f"   ✅ 找到搜索框: {desc}")
+                        break
+                except:
+                    continue
+            
+            if not search_box:
+                logger.warning("   ⚠️ 未找到搜索框")
+                return False
+            
+            # 清空并输入关键词
+            search_box.clear()
+            search_box.input(keyword)
+            time.sleep(0.5)
+            
+            # 查找并点击搜索按钮
+            submit_button = None
+            button_selectors = [
+                ('css:button[type="submit"]', '提交按钮'),
+                ('css:button.search-btn', '搜索按钮（class）'),
+                ('css:.search-button', '搜索按钮（class）'),
+                ('css:input[type="submit"]', '提交输入框'),
+            ]
+            
+            for selector, desc in button_selectors:
+                try:
+                    submit_button = self.page.ele(selector, timeout=1)
+                    if submit_button:
+                        logger.info(f"   ✅ 找到搜索按钮: {desc}")
+                        break
+                except:
+                    continue
+            
+            if submit_button:
+                submit_button.click()
+            else:
+                # 如果没找到按钮，尝试回车
+                logger.info("   ⚠️ 未找到搜索按钮，尝试回车")
+                search_box.input('\n')
+            
+            time.sleep(2)  # 等待搜索结果加载
+            logger.info("   ✅ 搜索提交成功")
+            return True
+            
+        except Exception as e:
+            logger.error(f"   ❌ 执行搜索失败: {e}")
+            return False
+    
+    def _goto_next_page(self) -> bool:
+        """跳转到下一页
+        
+        Returns:
+            True: 成功翻页
+            False: 没有下一页或翻页失败
+        """
+        try:
+            # 尝试多种下一页选择器
+            next_selectors = [
+                ('css:a.next', '下一页链接（class=next）'),
+                ('css:a[title="下一页"]', '下一页链接（title）'),
+                ('css:a:contains("下一页")', '下一页链接（文本）'),
+                ('css:a:contains(">")', '下一页链接（>符号）'),
+                ('css:.pagination a:last-child', '分页最后一个链接'),
+            ]
+            
+            for selector, desc in next_selectors:
+                try:
+                    next_btn = self.page.ele(selector, timeout=1)
+                    if next_btn:
+                        # 检查是否被禁用
+                        if 'disabled' in next_btn.attr('class'):
+                            return False
+                        
+                        logger.debug(f"   ✅ 找到下一页按钮: {desc}")
+                        next_btn.click()
+                        time.sleep(2)
+                        return True
+                except:
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"   翻页失败: {e}")
+            return False
+    
+    def _parse_date(self, date_str: str) -> datetime:
+        """解析日期字符串
+        
+        Args:
+            date_str: 日期字符串（如 "2024-01-15" 或 "2024-01-15 10:30"）
+            
+        Returns:
+            datetime对象，解析失败返回None
+        """
+        try:
+            # 尝试多种日期格式
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d']:
+                try:
+                    return datetime.strptime(date_str.strip(), fmt)
+                except:
+                    continue
+            return None
+        except:
+            return None
+    
     def fetch_by_filters(
         self,
         date_range=None,
@@ -409,16 +647,22 @@ class PLAPSpider:
                     max_results=max_results
                 )
                 api_client.close()
-                return announcements
+                
+                # 如果 API 返回空结果，尝试降级
+                if not announcements:
+                    logger.warning("⚠️ API 返回空结果，切换到传统爬取模式")
+                    use_api = False
+                else:
+                    return announcements
+                    
             except Exception as e:
                 logger.error(f"❌ API 爬取失败: {e}")
                 logger.warning("⚠️ 切换到传统爬取模式")
                 use_api = False
         
-        if not use_api:
-            # 降级到传统爬取方式
-            logger.info("🔄 使用传统爬取模式")
-            return self.fetch_announcements()
+        # 降级到传统爬取方式
+        logger.info("🔄 使用传统爬取模式")
+        return self.fetch_announcements()
     
     def close(self):
         """关闭浏览器"""
