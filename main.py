@@ -206,29 +206,48 @@ class TenderCopilot:
             logger.info("🤖 步骤 5/7: 深度分析（内容+AI+附件）")
             self.deep_analyze_projects(filtered)
             
-            # 步骤6: 二次过滤（只保留高质量项目）
-            logger.info("🎯 步骤 6/7: 二次过滤（评分>=60分）")
-            high_quality = [p for p in filtered if p['feasibility'].get('passes_filter', False)]
-            logger.info(f"✅ 筛选出 {len(high_quality)} 个高质量项目（评分>=60）")
+            # 步骤6: 分析结果分层（推荐+备选）
+            logger.info("🎯 步骤 6/7: 结果分层（推荐项目 + 备选项目）")
+            recommended = [p for p in filtered if p['feasibility']['total'] >= 60]  # 推荐项目
+            alternatives = [p for p in filtered if p['feasibility']['total'] < 60]  # 备选项目
             
-            if not high_quality:
-                logger.warning("⚠️ 没有高质量项目，跳过推送")
+            logger.info(f"  ✅ 推荐项目: {len(recommended)} 个（评分≥60分）")
+            if len(recommended) > 0:
+                excellent = sum(1 for p in recommended if p['feasibility']['total'] >= 80)
+                good = len(recommended) - excellent
+                if excellent > 0:
+                    logger.info(f"     - 优秀: {excellent} 个（≥80分）")
+                if good > 0:
+                    logger.info(f"     - 良好: {good} 个（60-79分）")
+            
+            if alternatives:
+                logger.info(f"  📌 备选项目: {len(alternatives)} 个（评分<60分，可人工复核）")
+            
+            if not filtered:
+                logger.warning("⚠️ 没有任何项目，流程结束")
                 return
             
-            # 步骤7: 生成报告并推送
+            # 步骤7: 生成报告并推送（包含所有项目）
             logger.info("📝 步骤 7/7: 生成报告并推送通知")
             stats = {
                 'total_crawled': len(all_announcements),
                 'total_matched': len(filtered),
-                'high_quality': len(high_quality),
-                'excellent': sum(1 for p in high_quality if p['feasibility']['total'] >= 80),
-                'good': sum(1 for p in high_quality if 60 <= p['feasibility']['total'] < 80)
+                'recommended': len(recommended),
+                'excellent': sum(1 for p in recommended if p['feasibility']['total'] >= 80),
+                'good': sum(1 for p in recommended if 60 <= p['feasibility']['total'] < 80),
+                'alternatives': len(alternatives)
             }
-            report = self.reporter.generate_daily_report(high_quality, stats)
             
-            # 推送通知
+            # 生成包含所有项目的报告
+            report = self.reporter.generate_daily_report(filtered, stats)
+            
+            # 推送通知（优先通知推荐项目）
             logger.info("📤 推送通知")
-            self.notification_manager.send_report(report, high_quality)
+            if recommended:
+                logger.info(f"   🎯 优先通知 {len(recommended)} 个推荐项目")
+            if alternatives:
+                logger.info(f"   📌 报告包含 {len(alternatives)} 个备选项目（供人工复核）")
+            self.notification_manager.send_report(report, recommended if recommended else filtered)
             
             # 显示统计
             crawl_stats = self.crawl_tracker.get_statistics()
