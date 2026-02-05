@@ -35,6 +35,7 @@ class TenderCopilot:
         # 初始化组件
         self.db = DatabaseManager(self.config['database']['path'])
         self.crawl_tracker = CrawlTracker(self.db, self.config)
+        self.api_client = None
         self.spider = None
         self.attachment_handler = None
         self.keyword_matcher = None
@@ -129,6 +130,10 @@ class TenderCopilot:
         """初始化所有组件"""
         logger.info("🔧 正在初始化组件...")
         
+        # 初始化 API 客户端（优先使用）
+        from src.spider.api_client import PLAPApiClient
+        self.api_client = PLAPApiClient(self.config)
+        
         self.spider = PLAPSpider(self.config)
         self.attachment_handler = AttachmentHandler(self.config)
         self.keyword_matcher = KeywordMatcher(self.config)
@@ -155,9 +160,9 @@ class TenderCopilot:
         logger.success("✅ 组件初始化完成")
     
     def run_pipeline(self):
-        """执行完整流程（新的增量搜索模式）"""
+        """执行完整流程（列表页增量爬取 + 本地关键词筛选）"""
         logger.info("=" * 60)
-        logger.info("🚀 TenderCopilot 开始运行（增量搜索模式）")
+        logger.info("🚀 TenderCopilot 开始运行（列表页增量爬取 + 本地筛选）")
         logger.info("=" * 60)
         
         try:
@@ -173,26 +178,47 @@ class TenderCopilot:
             logger.info(f"  本次爬取: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logger.info(f"  时间间隔: {((datetime.now() - last_crawl_time).total_seconds() / 3600):.1f} 小时")
             
-            # 步骤2: 准备搜索关键词
+            # 步骤2: 准备搜索关键词（用于后续筛选）
             logger.info("🔑 步骤 2/7: 准备搜索关键词")
             keywords = self._get_search_keywords()
             logger.info(f"  共 {len(keywords)} 个关键词: {', '.join(keywords[:5])}...")
             
-            # 步骤3: 逐个关键词搜索爬取（增量模式）
-            logger.info("📥 步骤 3/7: 逐个关键词搜索爬取")
-            all_announcements = []
-            for i, keyword in enumerate(keywords, 1):
-                logger.info(f"  🔍 [{i}/{len(keywords)}] 搜索: '{keyword}'")
-                results = self.spider.search_by_keyword(
-                    keyword=keyword,
-                    last_crawl_time=last_crawl_time,
-                    db_manager=self.db,
-                    max_results=self.config.get('crawl_strategy', {}).get('max_per_keyword', 200)
-                )
-                all_announcements.extend(results)
-                logger.info(f"     获取 {len(results)} 条新公告")
+            # 步骤3: 多页增量爬取（已验证的稳定方案）
+            logger.info("📥 步骤 3/7: 多页增量爬取")
+            logger.info(f"  📅 时间范围: {last_crawl_time.strftime('%Y-%m-%d %H:%M')} → 现在")
             
-            logger.info(f"✅ 搜索完成，共获取 {len(all_announcements)} 条新公告")
+            # ✅ 使用改进的多页爬取（带去重和智能停止）
+            try:
+                logger.info("  🕷️ 正在爬取采购公告列表页（多页模式）...")
+                
+                # 传递数据库管理器用于去重
+                crawl_config = self.config.get('crawl_strategy', {})
+                max_pages = crawl_config.get('max_pages', 5)  # 默认5页
+                max_consecutive = crawl_config.get('max_consecutive_exists', 5)  # 连续5条重复停止
+                
+                all_announcements = self.spider.fetch_announcements(
+                    max_pages=max_pages,
+                    db_manager=self.db,
+                    max_consecutive_exists=max_consecutive
+                )
+                
+                logger.info(f"  ✅ 爬取成功，共获取 {len(all_announcements)} 条新公告")
+                
+                # 时间过滤：只保留增量时间窗口内的公告
+                if all_announcements:
+                    logger.info(f"  ⏱️ 应用时间过滤（保留 {last_crawl_time.strftime('%Y-%m-%d %H:%M')} 之后的）")
+                    original_count = len(all_announcements)
+                    all_announcements = [
+                        ann for ann in all_announcements
+                        if self._is_new_announcement(ann, last_crawl_time)
+                    ]
+                    logger.info(f"  ✅ 过滤完成: {original_count} → {len(all_announcements)} 条新公告")
+                
+            except Exception as e:
+                logger.error(f"❌ 列表页爬取失败: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                all_announcements = []
             
             # 记录爬取历史并更新时间
             self.crawl_tracker.record_crawl(len(all_announcements), success=True)
@@ -202,10 +228,12 @@ class TenderCopilot:
                 logger.warning("⚠️ 未爬取到任何新公告，流程结束")
                 return
             
-            # 步骤4: 初步筛选（关键词+地域）
-            logger.info("🔍 步骤 4/7: 初步筛选（关键词匹配+地域检查）")
+            # 步骤4: 本地关键词筛选+地域检查
+            logger.info("🔍 步骤 4/7: 本地关键词筛选+地域检查")
+            logger.info(f"  📋 待筛选: {len(all_announcements)} 条公告")
+            logger.info(f"  🔑 关键词: {', '.join(keywords[:3])}... 等{len(keywords)}个")
             filtered = self.filter_announcements(all_announcements)
-            logger.info(f"✅ 筛选出 {len(filtered)} 个匹配项目")
+            logger.info(f"✅ 筛选出 {len(filtered)} 个匹配项目（匹配率: {len(filtered)/len(all_announcements)*100:.1f}%）")
             
             if not filtered:
                 logger.warning("⚠️ 未找到匹配项目，流程结束")
@@ -258,6 +286,54 @@ class TenderCopilot:
         finally:
             if self.spider:
                 self.spider.close()
+    
+    def _is_new_announcement(self, announcement, last_crawl_time):
+        """判断公告是否是新的（发布时间晚于上次爬取时间）
+        
+        Args:
+            announcement: 公告字典
+            last_crawl_time: 上次爬取时间
+            
+        Returns:
+            bool: 是否是新公告
+        """
+        try:
+            publish_date_str = announcement.get('publish_date', '')
+            if not publish_date_str:
+                # 如果没有发布时间，保守起见认为是新的
+                return True
+            
+            # 尝试解析发布时间
+            from datetime import datetime
+            
+            # 尝试多种日期格式
+            date_formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+                '%Y-%m-%d',
+                '%Y年%m月%d日',
+            ]
+            
+            publish_date = None
+            for fmt in date_formats:
+                try:
+                    publish_date = datetime.strptime(publish_date_str, fmt)
+                    break
+                except:
+                    continue
+            
+            if not publish_date:
+                # 如果无法解析，保守起见认为是新的
+                logger.debug(f"  ⚠️ 无法解析发布时间: {publish_date_str}")
+                return True
+            
+            # 比较时间
+            is_new = publish_date > last_crawl_time
+            return is_new
+            
+        except Exception as e:
+            logger.debug(f"  ⚠️ 判断新公告时出错: {e}")
+            return True  # 出错时保守起见认为是新的
     
     def _get_search_keywords(self):
         """获取搜索关键词列表

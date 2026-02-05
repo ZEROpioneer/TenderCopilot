@@ -39,69 +39,198 @@ class PLAPSpider:
             logger.error(f"❌ 浏览器初始化失败: {e}")
             return False
     
-    def fetch_announcements(self, max_pages=3):
-        """爬取招标公告列表"""
+    def _load_page_with_retry(self, url, max_retries=3):
+        """加载页面并等待AJAX完成（带重试机制）
+        
+        Args:
+            url: 目标URL
+            max_retries: 最大重试次数
+            
+        Returns:
+            bool: 是否成功加载
+        """
+        for retry in range(max_retries):
+            if retry > 0:
+                logger.info(f"   🔄 第 {retry + 1} 次尝试...")
+            
+            try:
+                self.page.get(url)
+            except Exception as e:
+                logger.warning(f"   ❌ 页面访问失败: {e}")
+                if retry < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                return False
+            
+            logger.debug("   ⏳ 等待页面基础加载...")
+            time.sleep(3)
+            
+            # 等待AJAX加载完成 - 等待公告列表出现
+            logger.debug("   ⏳ 等待公告列表加载（AJAX异步）...")
+            try:
+                # 等待第一个公告链接出现（最多20秒）
+                self.page.wait.ele_displayed('css:ul.noticeShowList li a', timeout=20)
+                logger.debug("   ✅ 公告列表已加载")
+            except Exception as e:
+                logger.warning(f"   ⚠️ 等待超时: {e}")
+                logger.info("   💡 尝试手动触发...")
+                try:
+                    self.page.scroll.to_bottom()
+                    time.sleep(3)
+                    self.page.scroll.to_top()
+                    time.sleep(3)
+                except:
+                    pass
+            
+            # 诊断：检查公告列表状态
+            try:
+                notice_list = self.page.ele('css:ul.noticeShowList', timeout=2)
+                if notice_list:
+                    lis = notice_list.eles('tag:li')
+                    logger.debug(f"   📊 公告列表包含 {len(lis)} 个元素")
+                    
+                    if len(lis) == 0:
+                        logger.warning("   ❌ 列表为空！AJAX未加载")
+                        if retry < max_retries - 1:
+                            logger.info("   💡 将在2秒后重试...")
+                            time.sleep(2)
+                            continue
+                        return False
+                    else:
+                        logger.debug("   ✅ 列表有内容")
+                        return True
+                else:
+                    logger.warning("   ❌ 未找到公告列表容器")
+                    if retry < max_retries - 1:
+                        time.sleep(2)
+                        continue
+                    return False
+            except Exception as e:
+                logger.warning(f"   ❌ 诊断失败: {e}")
+                if retry < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                return False
+        
+        logger.error(f"❌ 尝试{max_retries}次后仍然失败")
+        return False
+    
+    def fetch_announcements(self, max_pages=5, db_manager=None, max_consecutive_exists=5):
+        """爬取招标公告列表（多页增量版本）
+        
+        Args:
+            max_pages: 最多爬取页数（默认5页）
+            db_manager: 数据库管理器（用于去重检查）
+            max_consecutive_exists: 连续多少条重复后停止（默认5）
+            
+        Returns:
+            公告列表
+        """
         logger.info(f"🔍 开始爬取招标公告: {self.list_url}")
+        logger.info(f"   最多爬取: {max_pages} 页")
+        if db_manager:
+            logger.info(f"   增量策略: 连续{max_consecutive_exists}条重复停止")
         
         if not self.page:
             if not self.init_browser():
                 return []
         
-        announcements = []
+        all_announcements = []
+        consecutive_exists = 0
         
         try:
-            # 访问列表页
-            self.page.get(self.list_url)
-            time.sleep(3)  # 增加等待时间
+            # ✅ 使用重试机制加载页面
+            page_loaded = self._load_page_with_retry(self.list_url, max_retries=3)
+            
+            if not page_loaded:
+                logger.error("❌ 页面加载失败（已重试3次）")
+                return []
             
             # 保存调试信息
             self._save_debug_info()
             
-            # 智能查找公告列表项
-            items = self._find_announcement_items()
+            # 多页爬取
+            page_num = 1
+            should_stop = False
             
-            if not items:
-                logger.warning("⚠️ 未找到任何公告列表项")
-                logger.info("💡 请查看 data/debug/ 目录下的调试文件")
-                return []
-            
-            logger.info(f"📄 找到 {len(items)} 个公告项")
-            
-            for item in items[:50]:  # 限制数量
-                try:
-                    announcement = self._parse_list_item(item)
-                    if announcement:
-                        announcements.append(announcement)
-                        logger.info(f"📄 发现公告: {announcement['title']}")
-                except Exception as e:
-                    logger.warning(f"⚠️ 解析公告项失败: {e}")
-                    continue
+            while page_num <= max_pages and not should_stop:
+                logger.info(f"📄 第 {page_num} 页...")
                 
-                # 随机延迟
-                self._random_delay()
+                # 智能查找公告列表项
+                items = self._find_announcement_items()
+                
+                if not items:
+                    logger.warning(f"   ⚠️ 未找到公告列表项，停止")
+                    break
+                
+                logger.info(f"   找到 {len(items)} 个公告项")
+                
+                page_new = 0
+                page_duplicate = 0
+                
+                # 解析本页公告
+                for item in items:
+                    try:
+                        announcement = self._parse_list_item(item)
+                        if not announcement:
+                            continue
+                        
+                        # 数据库去重检查
+                        if db_manager and db_manager.exists(announcement['id']):
+                            consecutive_exists += 1
+                            page_duplicate += 1
+                            
+                            # 连续重复达到阈值，停止爬取
+                            if consecutive_exists >= max_consecutive_exists:
+                                logger.info(f"   ⏹️ 连续{consecutive_exists}条重复，停止爬取")
+                                should_stop = True
+                                break
+                        else:
+                            consecutive_exists = 0  # 重置计数器
+                            page_new += 1
+                            all_announcements.append(announcement)
+                            logger.debug(f"   ✅ [{len(all_announcements)}] {announcement['title'][:50]}...")
+                        
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ 解析公告项失败: {e}")
+                        continue
+                
+                logger.info(f"   本页统计: 新增 {page_new} 条，重复 {page_duplicate} 条")
+                logger.info(f"   累计爬取: {len(all_announcements)} 条新公告")
+                
+                if should_stop:
+                    logger.info(f"   🛑 达到停止条件")
+                    break
+                
+                # 尝试翻页
+                if page_num < max_pages:
+                    logger.info(f"   📖 尝试翻到第 {page_num + 1} 页...")
+                    if self._goto_next_page():
+                        page_num += 1
+                    else:
+                        logger.info("   ⏹️ 没有下一页")
+                        break
+                else:
+                    logger.info(f"   ⏹️ 达到最大页数限制（{max_pages}页）")
+                    break
             
-            logger.success(f"✅ 爬取完成，共 {len(announcements)} 条公告")
+            logger.success(f"✅ 爬取完成：共爬取 {page_num} 页，获得 {len(all_announcements)} 条新公告")
             
         except Exception as e:
             logger.error(f"❌ 爬取失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
         
-        return announcements
+        return all_announcements
     
     def _find_announcement_items(self):
-        """智能查找公告列表项"""
-        logger.info("🔍 开始智能查找公告项...")
-        
-        # 策略1: 尝试查找表格行或列表项
+        """智能查找公告列表项（优先使用验证成功的选择器）"""
+        # ✅ 优先策略：使用验证成功的选择器
         selectors = [
+            ('css:ul.noticeShowList li', '公告列表项（主选择器）'),
             ('css:table tbody tr', '表格行'),
             ('css:table tr', '表格行（无tbody）'),
-            ('css:ul li', '列表项'),
-            ('css:.result-list tr', '结果列表表格行'),
-            ('css:.result-list li', '结果列表项'),
-            ('css:[class*="list"] tr', '包含list的表格行'),
-            ('css:[class*="result"] tr', '包含result的表格行'),
+            ('css:ul li', '列表项（通用）'),
         ]
         
         for selector, desc in selectors:
@@ -113,64 +242,25 @@ class PLAPSpider:
                 # 过滤出包含公告链接的项
                 valid_items = []
                 for item in items:
-                    link = item.ele('tag:a', timeout=0.5)
-                    if link:
-                        href = link.attr('href')
+                    links = item.eles('tag:a')
+                    if links:
+                        link = links[0]
+                        href = link.attr('href') or ''
                         # 只保留包含公告路径的链接
-                        if href and '/ggxx/info/' in href:
+                        if '/ggxx/info/' in href:
                             valid_items.append(item)
                 
                 if len(valid_items) >= 5:  # 至少要有5个有效项
-                    logger.info(f"✅ 使用选择器成功: {selector} ({desc}) - 找到 {len(valid_items)} 个公告项")
+                    logger.debug(f"   ✅ 使用 {desc} - 找到 {len(valid_items)} 个公告项")
                     return valid_items
                 elif len(valid_items) > 0:
-                    logger.info(f"⚠️ {desc} 只找到 {len(valid_items)} 个公告项，继续尝试...")
+                    logger.debug(f"   ⚠️ {desc} 只找到 {len(valid_items)} 个，继续尝试...")
             except Exception as e:
-                logger.debug(f"  {desc} 选择器失败: {e}")
+                logger.debug(f"   {desc} 失败: {e}")
                 continue
         
-        # 策略2: 直接查找所有公告链接，并将它们作为"项"
-        logger.info("🔍 策略2: 直接查找公告链接...")
-        try:
-            all_links = self.page.eles('tag:a', timeout=2)
-            logger.info(f"📝 页面共有 {len(all_links)} 个链接")
-            
-            # 过滤出公告链接
-            announcement_links = []
-            for link in all_links:
-                href = link.attr('href')
-                text = link.text.strip()
-                
-                # 只保留公告链接
-                if href and '/ggxx/info/' in href and len(text) > 10:
-                    announcement_links.append(link)
-            
-            if len(announcement_links) > 0:
-                logger.info(f"✅ 找到 {len(announcement_links)} 个公告链接")
-                
-                # 显示前5个示例
-                logger.info("📋 前5个公告示例:")
-                for i, link in enumerate(announcement_links[:5], 1):
-                    text = link.text.strip()
-                    logger.info(f"  {i}. {text[:60]}...")
-                
-                return announcement_links
-            else:
-                logger.warning("⚠️ 未找到任何公告链接（包含 /ggxx/info/ 路径）")
-                
-                # 输出所有链接供调试
-                logger.info("📝 页面所有链接（前20个）:")
-                for i, link in enumerate(all_links[:20], 1):
-                    text = link.text.strip()
-                    href = link.attr('href')
-                    if text:
-                        logger.info(f"  {i}. {text[:50]} -> {href}")
-                
-                return []
-            
-        except Exception as e:
-            logger.error(f"❌ 查找链接失败: {e}")
-            return []
+        logger.warning("⚠️ 所有选择器都未找到足够的公告项")
+        return []
     
     def _save_debug_info(self):
         """保存调试信息"""
@@ -197,83 +287,75 @@ class PLAPSpider:
             logger.warning(f"⚠️ 保存调试信息失败: {e}")
     
     def _parse_list_item(self, item):
-        """解析列表项"""
+        """解析列表项（已验证的v2版本 - 正确提取地域和日期）"""
         try:
             # 提取标题链接
-            title_ele = item.ele('tag:a', timeout=1)
-            if not title_ele:
+            links = item.eles('tag:a')
+            if not links:
                 return None
             
-            title = title_ele.text.strip()
-            url = title_ele.attr('href')
+            link = links[0]
+            href = link.attr('href') or ''
+            title = link.text.strip()
             
             # 过滤掉非公告链接
-            if not url or '/ggxx/info/' not in url:
+            if not href or '/ggxx/info/' not in href:
                 return None
             
             # 补全URL
-            if url and not url.startswith('http'):
-                url = self.base_url + url
+            if href.startswith('/'):
+                url = self.base_url + href
+            else:
+                url = href
             
-            # 提取日期 - 尝试多种方式
-            date_text = ''
+            # 提取ID（从URL中提取32位hex）
+            import re
+            id_match = re.search(r'/([a-f0-9]{32})\.html', href)
+            announcement_id = id_match.group(1) if id_match else href.split('/')[-1].split('.')[0]
+            
+            # ✅ 关键修复：使用验证成功的地域提取逻辑
+            # HTML结构：<li><a>...</a><span>类型</span><span>地域</span><span>日期</span></li>
+            spans = item.eles('tag:span')
+            location = '未知'
+            date_text = '未知'
+            
             try:
-                # 方式1: 查找包含日期的单元格
-                date_ele = item.ele('css:.date', timeout=0.5)
-                if date_ele:
-                    date_text = date_ele.text.strip()
+                if len(spans) >= 3:
+                    # 标准情况：spans[0]=类型, spans[1]=地域, spans[2]=日期
+                    location = spans[1].text.strip()
+                    date_text = spans[2].text.strip()
+                elif len(spans) == 2:
+                    # 2个span：可能是地域+日期
+                    location = spans[0].text.strip()
+                    date_text = spans[1].text.strip()
+                elif len(spans) == 1:
+                    # 只有1个span：可能是日期
+                    span_text = spans[0].text.strip()
+                    if re.match(r'\d{4}-\d{2}-\d{2}$', span_text):
+                        date_text = span_text
+                    else:
+                        location = span_text
             except:
                 pass
             
-            if not date_text:
-                try:
-                    # 方式2: 如果是表格行，获取最后一列（通常是日期）
-                    if item.tag == 'tr':
-                        cells = item.eles('tag:td', timeout=0.5)
-                        if len(cells) > 0:
-                            # 通常日期在最后一列
-                            date_text = cells[-1].text.strip()
-                except:
-                    pass
-            
-            if not date_text:
-                try:
-                    # 方式3: 从标题文本中提取日期（如果标题包含日期）
-                    import re
-                    date_match = re.search(r'(\d{4}-\d{2}-\d{2})', title)
-                    if date_match:
-                        date_text = date_match.group(1)
-                except:
-                    pass
-            
-            # 如果还是没有日期，使用当前日期
-            if not date_text or len(date_text) < 8:
-                date_text = datetime.now().strftime('%Y-%m-%d')
-            
-            # 提取摘要（如果有）
-            summary = ''
-            try:
-                if item.tag == 'tr':
-                    cells = item.eles('tag:td', timeout=0.5)
-                    # 摘要通常在第二列或第三列
-                    if len(cells) > 1:
-                        for cell in cells[1:-1]:  # 跳过第一列（标题）和最后一列（日期）
-                            text = cell.text.strip()
-                            if text and len(text) > 5 and text != title:
-                                summary = text
-                                break
-            except:
-                pass
-            
-            # 生成唯一ID
-            announcement_id = self._generate_id(title, date_text)
+            # 如果日期不是标准格式，尝试提取
+            if not re.match(r'\d{4}-\d{2}-\d{2}$', date_text):
+                # 从标题提取日期
+                date_in_title = re.search(r'(\d{4}-\d{2}-\d{2})', title)
+                if date_in_title:
+                    date_text = date_in_title.group(1)
+                else:
+                    # 使用当前日期
+                    date_text = datetime.now().strftime('%Y-%m-%d')
             
             return {
                 'id': announcement_id,
                 'title': title,
                 'url': url,
                 'pub_date': date_text,
-                'summary': summary,
+                'publish_date': date_text,  # 统一字段名
+                'location': location,
+                'summary': '',
                 'crawled_at': datetime.now().isoformat()
             }
             
@@ -492,22 +574,33 @@ class PLAPSpider:
             False: 搜索失败
         """
         try:
-            # 尝试多种搜索框选择器
+            # 尝试多种搜索框选择器（优先级从高到低）
             search_selectors = [
+                ('css:input[name="key"]', '按name="key"查找（主搜索框）'),
+                ('css:input[name="identity"]', '按name="identity"查找（标题搜索框）'),
+                ('css:input[id="title"]', '按id="title"查找'),
+                ('css:input[id="art-title"]', '按id="art-title"查找'),
+                ('css:input[type="text"][placeholder*="查询"]', '按placeholder包含"查询"'),
+                ('css:input[type="text"][placeholder*="标题"]', '按placeholder包含"标题"'),
                 ('css:input[type="text"][name*="search"]', '按name查找'),
-                ('css:input[type="text"][placeholder*="搜索"]', '按placeholder查找'),
-                ('css:input[type="text"][placeholder*="关键"]', '按placeholder查找'),
                 ('css:.search-input', '按class查找'),
                 ('css:#searchInput', '按ID查找'),
-                ('css:input[type="text"]', '通用文本输入框'),
             ]
             
             search_box = None
             for selector, desc in search_selectors:
                 try:
-                    search_box = self.page.ele(selector, timeout=1)
-                    if search_box:
+                    box = self.page.ele(selector, timeout=1)
+                    if box:
+                        # 排除下拉选择框
+                        placeholder = box.attr('placeholder') or ''
+                        if '直接选择' in placeholder or '下拉' in placeholder:
+                            logger.debug(f"   ⏭️  跳过下拉框: {placeholder}")
+                            continue
+                        
+                        search_box = box
                         logger.info(f"   ✅ 找到搜索框: {desc}")
+                        logger.debug(f"      placeholder='{placeholder}'")
                         break
                 except:
                     continue
@@ -555,41 +648,92 @@ class PLAPSpider:
             return False
     
     def _goto_next_page(self) -> bool:
-        """跳转到下一页
+        """跳转到下一页（智能等待版本）
+        
+        注意：军队采购网使用<li>元素实现分页，不是<a>链接
         
         Returns:
             True: 成功翻页
             False: 没有下一页或翻页失败
         """
         try:
-            # 尝试多种下一页选择器
+            logger.debug("   🔍 正在查找翻页按钮...")
+            
+            # ✅ 正确的选择器：查找<li>元素（不是<a>）
             next_selectors = [
-                ('css:a.next', '下一页链接（class=next）'),
-                ('css:a[title="下一页"]', '下一页链接（title）'),
-                ('css:a:contains("下一页")', '下一页链接（文本）'),
-                ('css:a:contains(">")', '下一页链接（>符号）'),
-                ('css:.pagination a:last-child', '分页最后一个链接'),
+                ('xpath://div[@id="pagination"]//li[text()=">"]', '下一页(>)'),
+                ('css:#pagination li:has-text(">")', '下一页CSS'),
             ]
             
+            next_btn = None
             for selector, desc in next_selectors:
                 try:
-                    next_btn = self.page.ele(selector, timeout=1)
-                    if next_btn:
+                    btn = self.page.ele(selector, timeout=1)
+                    if btn:
                         # 检查是否被禁用
-                        if 'disabled' in next_btn.attr('class'):
+                        btn_class = btn.attr('class') or ''
+                        if 'disabled' in btn_class:
+                            logger.debug(f"   ⚠️ 按钮已禁用（最后一页）")
                             return False
                         
-                        logger.debug(f"   ✅ 找到下一页按钮: {desc}")
-                        next_btn.click()
-                        time.sleep(2)
-                        return True
+                        next_btn = btn
+                        logger.debug(f"   🔗 找到 {desc}")
+                        break
                 except:
                     continue
             
-            return False
+            if not next_btn:
+                logger.debug("   ⚠️ 未找到下一页按钮")
+                return False
+            
+            # ✅ 智能翻页等待：记录翻页前第一条公告标题
+            old_first_title = None
+            try:
+                old_first_item = self.page.ele('css:ul.noticeShowList li:nth-child(1) a', timeout=2)
+                if old_first_item:
+                    old_first_title = old_first_item.text
+                    logger.debug(f"   📋 翻页前第一条: {old_first_title[:30]}...")
+            except:
+                pass
+            
+            # 点击翻页
+            logger.debug("   ✅ 准备点击翻页...")
+            next_btn.click()
+            
+            # ✅ 关键：等待公告列表真正刷新（标题变化）
+            logger.debug("   ⏳ 等待AJAX刷新公告列表...")
+            max_wait = 10  # 最多等待10秒
+            waited = 0
+            refreshed = False
+            
+            while waited < max_wait:
+                time.sleep(1)
+                waited += 1
+                
+                try:
+                    new_first_item = self.page.ele('css:ul.noticeShowList li:nth-child(1) a', timeout=1)
+                    if new_first_item:
+                        new_first_title = new_first_item.text
+                        
+                        # 检查标题是否变化
+                        if new_first_title and new_first_title != old_first_title:
+                            logger.debug(f"   ✅ 列表已刷新（等待{waited}秒）")
+                            logger.debug(f"   📋 翻页后第一条: {new_first_title[:30]}...")
+                            refreshed = True
+                            break
+                except:
+                    pass
+            
+            if not refreshed:
+                logger.warning(f"   ⚠️ 等待{max_wait}秒后仍未检测到列表刷新")
+                # 即使未检测到刷新也继续（可能是页面结构变化）
+            
+            # 额外等待1秒确保完全加载
+            time.sleep(1)
+            return True
             
         except Exception as e:
-            logger.debug(f"   翻页失败: {e}")
+            logger.debug(f"   ❌ 翻页失败: {e}")
             return False
     
     def _parse_date(self, date_str: str) -> datetime:

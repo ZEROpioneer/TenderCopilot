@@ -110,7 +110,18 @@ attachments/
 
 # 备份文件
 *.db.backup
+backup/
 backups/
+
+# 测试结果文件
+prototype/results/*.json
+prototype/results/*.html
+prototype/results/*.png
+
+# 调试文件
+data/debug/*.html
+data/debug/*.png
+data/debug/*.jpg
 
 # 计划文件（可选，如果包含敏感信息）
 # .cursor/plans/
