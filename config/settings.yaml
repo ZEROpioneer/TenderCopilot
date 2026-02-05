@@ -36,6 +36,7 @@ crawl_strategy:
   # 增量爬取配置
   use_incremental: true           # 使用增量模式（从上次爬取时间开始）
   enable_db_dedup: true           # 启用数据库去重
+  enable_time_filter: false       # 启用时间过滤（默认关闭，依赖数据库ID去重）
   initial_hours: 168              # 首次运行时爬取最近N小时（7天）
   
   # 多页爬取配置

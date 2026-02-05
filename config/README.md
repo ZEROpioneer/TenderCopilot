@@ -31,11 +31,22 @@
 crawl_strategy:
   use_incremental: true           # 使用增量爬取
   enable_db_dedup: true           # 启用数据库去重
+  enable_time_filter: false       # 启用时间过滤（默认关闭）
   initial_hours: 168              # 首次运行爬取最近N小时
   max_pages: 5                    # 最多爬取页数
   max_consecutive_exists: 5       # 连续重复停止阈值
   max_per_keyword: 200            # 每个关键词最多爬取数量
 ```
+
+**关键配置项说明**：
+
+- **`enable_time_filter`**: 是否启用时间过滤功能
+  - **类型**: boolean
+  - **默认值**: `false`（关闭）
+  - **说明**:
+    - `false`: 只依赖数据库ID去重（推荐，性能更好）
+    - `true`: 额外应用时间过滤（可能因列表页时间精度不足导致误判）
+  - **建议**: 保持关闭。数据库ID去重已足够有效，时间信息会在评分阶段被充分考虑（发布新鲜度5分 + 截止充足度10分）
 
 **爬虫配置** (`spider`)：
 ```yaml

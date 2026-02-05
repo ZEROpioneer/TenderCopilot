@@ -31,10 +31,12 @@ class FeasibilityScorer:
         
         评分维度（根据类别调整）：
         1. 关键词匹配 (20分)
-        2. 内容相关度 (25分) - 新增
-        3. AI提取完整性 (20分) - 新增
-        4. 附件质量 (15分) - 新增
-        5. 时间充足度 (10分)
+        2. 内容相关度 (25分)
+        3. AI提取完整性 (20分)
+        4. 附件质量 (15分)
+        5. 时间综合评分 (15分) - 优化
+           - 发布新鲜度 (5分): 越新越好
+           - 截止充足度 (10分): 距离截止时间是否充足
         
         地域加分（不计入总分，额外加分）：
         - 文化氛围类 + 大连市：+5分
@@ -57,7 +59,7 @@ class FeasibilityScorer:
             'content_relevance': 0,  # 内容相关度 (0-25)
             'ai_completeness': 0,    # AI提取完整性 (0-20)
             'attachment_quality': 0, # 附件质量 (0-15)
-            'deadline_adequacy': 0,  # 时间充足度 (0-10)
+            'time_comprehensive': 0, # 时间综合评分 (0-15)
             'location_bonus': 0      # 地域加分 (0-10，额外)
         }
         
@@ -87,8 +89,9 @@ class FeasibilityScorer:
         else:
             scores['attachment_quality'] = 0
         
-        # 5. 时间充足度分（最高 10 分）
-        scores['deadline_adequacy'] = self._calculate_deadline_score(announcement, ai_extracted)
+        # 5. 时间综合评分（最高 15 分）- 优化版
+        time_score_result = self._calculate_time_score(announcement, ai_extracted)
+        scores['time_comprehensive'] = time_score_result['total']
         
         # 6. 地域加分（根据类别）
         scores['location_bonus'] = location_result.get('bonus_score', 0)
@@ -103,7 +106,8 @@ class FeasibilityScorer:
             'base_score': round(base_total, 1),
             'breakdown': {k: round(v, 1) for k, v in scores.items()},
             'level': self._get_level(final_total),
-            'passes_filter': self._check_second_filter(final_total, ai_extracted, scores['deadline_adequacy'])
+            'passes_filter': self._check_second_filter(final_total, ai_extracted, time_score_result['deadline_adequacy']),
+            'time_score_details': time_score_result.get('details', {})  # 保存时间评分详情
         }
     
     def _calculate_ai_completeness(self, ai_extracted: Dict) -> float:
@@ -138,6 +142,125 @@ class FeasibilityScorer:
         
         completeness = valid_count / len(key_fields)
         return completeness
+    
+    def _calculate_time_score(self, announcement: Dict, ai_extracted: Optional[Dict] = None) -> Dict:
+        """计算时间综合评分（优化版）
+        
+        评分维度：
+        - 发布新鲜度 (0-5分): 越新越好
+        - 截止充足度 (0-10分): 距离截止时间是否充足
+        
+        Args:
+            announcement: 公告信息
+            ai_extracted: AI提取结果（可选）
+            
+        Returns:
+            {
+                'publish_freshness': 0-5,  # 发布新鲜度
+                'deadline_adequacy': 0-10,  # 截止充足度
+                'total': 0-15,
+                'details': {...}
+            }
+        """
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        score = {'publish_freshness': 0, 'deadline_adequacy': 0, 'details': {}}
+        
+        # 1. 发布新鲜度 (5分)
+        publish_date_str = announcement.get('publish_date') or announcement.get('pub_date', '')
+        if publish_date_str:
+            try:
+                publish_date = self._parse_date(publish_date_str)
+                if publish_date:
+                    days_ago = (now - publish_date).days
+                    if days_ago <= 1:
+                        score['publish_freshness'] = 5
+                        score['details']['freshness'] = '今天/昨天发布'
+                    elif days_ago <= 3:
+                        score['publish_freshness'] = 4
+                        score['details']['freshness'] = f'{days_ago}天前发布'
+                    elif days_ago <= 7:
+                        score['publish_freshness'] = 3
+                        score['details']['freshness'] = f'{days_ago}天前发布'
+                    elif days_ago <= 14:
+                        score['publish_freshness'] = 2
+                        score['details']['freshness'] = f'{days_ago}天前发布'
+                    else:
+                        score['publish_freshness'] = 1
+                        score['details']['freshness'] = f'{days_ago}天前发布'
+            except:
+                score['publish_freshness'] = 2  # 解析失败给默认分
+                score['details']['freshness'] = '发布时间未知'
+        
+        # 2. 截止充足度 (10分)
+        deadline_str = None
+        if ai_extracted:
+            deadline_str = ai_extracted.get('opening_time') or ai_extracted.get('deadline')
+        if not deadline_str:
+            deadline_str = announcement.get('deadline')
+        
+        if deadline_str:
+            try:
+                days_left = self._calculate_days_left(deadline_str)
+                
+                if days_left < 0:
+                    score['deadline_adequacy'] = 0
+                    score['details']['deadline'] = '已截止'
+                elif days_left <= 3:
+                    score['deadline_adequacy'] = 3
+                    score['details']['deadline'] = f'仅剩{days_left}天'
+                elif days_left <= 7:
+                    score['deadline_adequacy'] = 6
+                    score['details']['deadline'] = f'剩余{days_left}天'
+                elif days_left <= 15:
+                    score['deadline_adequacy'] = 9
+                    score['details']['deadline'] = f'剩余{days_left}天'
+                else:
+                    score['deadline_adequacy'] = 10
+                    score['details']['deadline'] = f'剩余{days_left}天，充足'
+            except:
+                score['deadline_adequacy'] = 5  # 解析失败给中等分
+                score['details']['deadline'] = '截止时间解析失败'
+        else:
+            # 没有截止时间，给中等分
+            score['deadline_adequacy'] = 5
+            score['details']['deadline'] = '未提供截止时间'
+        
+        score['total'] = score['publish_freshness'] + score['deadline_adequacy']
+        return score
+    
+    def _parse_date(self, date_str: str) -> Optional[datetime]:
+        """解析日期字符串
+        
+        Args:
+            date_str: 日期字符串
+            
+        Returns:
+            datetime对象，失败返回None
+        """
+        if not date_str:
+            return None
+        
+        try:
+            # 尝试多种日期格式
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d', 
+                       '%Y年%m月%d日 %H:%M:%S', '%Y年%m月%d日 %H:%M', '%Y年%m月%d日']:
+                try:
+                    return datetime.strptime(date_str.strip(), fmt)
+                except:
+                    continue
+            
+            # 如果包含"年月日"但格式不标准，尝试提取
+            import re
+            match = re.search(r'(\d{4})[年\-/](\d{1,2})[月\-/](\d{1,2})', date_str)
+            if match:
+                year, month, day = match.groups()
+                return datetime(int(year), int(month), int(day))
+            
+            return None
+        except:
+            return None
     
     def _calculate_deadline_score(self, announcement: Dict, ai_extracted: Optional[Dict]) -> float:
         """计算时间充足度评分（0-10）

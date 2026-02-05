@@ -64,9 +64,32 @@ class MarkdownReporter:
         lines = []
         lines.append(f"### {index}. {ann['title']}\n")
         lines.append(f"**项目编号**: {ann.get('id', 'N/A')}  ")
-        lines.append(f"**发布日期**: {ann['pub_date']}  ")
         lines.append(f"**业务方向**: {direction['name']}  ")
         lines.append(f"**可行性评分**: {feas['total']} / 100 {self._get_stars(feas['total'])}\n")
+        
+        # 时间信息突出显示
+        time_info = []
+        if ann.get('publish_date') or ann.get('pub_date'):
+            publish_date = ann.get('publish_date') or ann.get('pub_date')
+            time_info.append(f"📅 发布: {publish_date}")
+        if ann.get('deadline'):
+            time_info.append(f"⏰ 截止: {ann['deadline']}")
+        
+        if time_info:
+            lines.append(f"**⏱️ 时间**: {' | '.join(time_info)}  ")
+        
+        # 如果有时间评分详情，显示评价
+        if feas.get('time_score_details'):
+            details = feas['time_score_details']
+            time_details = []
+            if details.get('freshness'):
+                time_details.append(f"新鲜度: {details['freshness']}")
+            if details.get('deadline'):
+                time_details.append(f"截止: {details['deadline']}")
+            if time_details:
+                lines.append(f"  - {' | '.join(time_details)}  ")
+        
+        lines.append("")
         
         if detailed and ann.get('url'):
             lines.append(f"**链接**: [查看原始公告]({ann['url']})\n")

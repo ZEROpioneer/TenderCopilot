@@ -161,15 +161,17 @@ class TenderCopilot:
                 
                 logger.info(f"  ✅ 爬取成功，共获取 {len(all_announcements)} 条新公告")
                 
-                # 时间过滤：只保留增量时间窗口内的公告
-                if all_announcements:
-                    logger.info(f"  ⏱️ 应用时间过滤（保留 {last_crawl_time.strftime('%Y-%m-%d %H:%M')} 之后的）")
+                # 可选的时间过滤
+                if all_announcements and self.config.get('crawl_strategy.enable_time_filter', False):
+                    logger.info(f"  ⏱️ 应用时间过滤（可选功能，保留 {last_crawl_time.strftime('%Y-%m-%d %H:%M')} 之后的）")
                     original_count = len(all_announcements)
                     all_announcements = [
                         ann for ann in all_announcements
                         if self._is_new_announcement(ann, last_crawl_time)
                     ]
-                    logger.info(f"  ✅ 过滤完成: {original_count} → {len(all_announcements)} 条新公告")
+                    logger.info(f"  ✅ 时间过滤: {original_count} → {len(all_announcements)} 条")
+                elif all_announcements:
+                    logger.info(f"  ⏭️ 跳过时间过滤（依赖数据库ID去重）")
                 
             except Exception as e:
                 logger.error(f"❌ 列表页爬取失败: {e}")
