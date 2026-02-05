@@ -100,10 +100,18 @@ python main.py --mode schedule
 
 ```
 TenderCopilot/
-├── config/                  # 配置文件
-│   ├── settings.yaml       # 主配置
+├── main.py                 # 主程序入口
+├── requirements.txt        # Python 依赖
+├── .env.example           # 环境变量模板
+├── .env                   # 环境变量（不上传）
+│
+├── config/                 # 配置文件
+│   ├── settings.yaml      # 主配置
 │   ├── business_directions.yaml  # 业务方向和关键词
-│   └── notifications.yaml  # 通知配置
+│   ├── search_keywords.yaml      # 搜索关键词
+│   ├── filter_settings.yaml      # 筛选配置
+│   └── notifications.yaml        # 通知配置
+│
 ├── src/                    # 源代码
 │   ├── spider/            # 爬虫模块
 │   ├── filter/            # 筛选模块
@@ -112,15 +120,29 @@ TenderCopilot/
 │   ├── notifier/          # 通知模块
 │   ├── scheduler/         # 定时任务模块
 │   └── database/          # 数据库模块
+│
+├── tests/                  # 测试文件
+│   ├── test_config.py     # 配置测试
+│   ├── test_imports.py    # 导入测试
+│   └── test_wechat_webhook.py  # Webhook 测试
+│
+├── docs/                   # 项目文档
+│   ├── IMPLEMENTATION_SUMMARY.md   # 实施总结
+│   ├── IMPLEMENTATION_COMPLETE.md  # 实施完成报告
+│   ├── TESTING_GUIDE.md           # 测试指南
+│   └── API_FIX_SUMMARY.md         # API 修复总结
+│
+├── tools/                  # 开发工具
+│   ├── find_api_endpoint.py      # API 端点查找
+│   ├── test_api_endpoints.py     # API 端点测试
+│   └── verify_codes.py           # 代码验证
+│
 ├── data/                   # 数据目录（不上传）
 │   ├── history.db         # SQLite 数据库
 │   ├── reports/           # 生成的报告
 │   └── attachments/       # 下载的附件
-├── logs/                   # 日志文件（不上传）
-├── .env                    # 环境变量（不上传）
-├── .env.example           # 环境变量模板
-├── requirements.txt       # Python 依赖
-└── main.py               # 主程序入口
+│
+└── logs/                   # 日志文件（不上传）
 ```
 
 ## 🔧 高级配置
