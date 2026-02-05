@@ -1,17 +1,30 @@
 """关键词匹配器"""
 
 from loguru import logger
+from typing import Dict, List, Any, Optional
 
 
 class KeywordMatcher:
     """业务方向关键词匹配"""
     
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """初始化关键词匹配器
+        
+        Args:
+            config: 配置字典，包含 business_directions 和 global_exclude
+        """
         self.directions = config['business_directions']
         self.exclude_keywords = config['global_exclude']['keywords']
     
-    def match(self, announcement):
-        """匹配业务方向"""
+    def match(self, announcement: Dict[str, str]) -> Optional[Dict[str, Dict[str, Any]]]:
+        """匹配业务方向
+        
+        Args:
+            announcement: 公告字典，包含 title, content, summary 等字段
+            
+        Returns:
+            匹配结果字典，如果无匹配则返回 None
+        """
         title = announcement['title']
         content = announcement.get('content', '')
         summary = announcement.get('summary', '')

@@ -20,11 +20,30 @@ spider:
     - ".pdf"
     - ".docx"
     - ".doc"
-  max_attachment_size: 10  # 最大附件大小（MB）
+  max_attachment_size: 20  # 最大附件大小（MB）- 统一配置
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
   request_delay_range:  # 请求间隔随机范围（秒）
     - 1
     - 2
+  # 等待时间配置（优化性能）
+  wait_ajax_load: 0.5           # AJAX加载等待（秒）
+  wait_page_refresh: 1          # 页面刷新等待（秒）
+  wait_between_pages: 2         # 翻页间隔（秒）
+  max_concurrent_details: 3     # 并发爬取详情页数量
+
+# 爬取策略配置（统一配置）
+crawl_strategy:
+  # 增量爬取配置
+  use_incremental: true           # 使用增量模式（从上次爬取时间开始）
+  enable_db_dedup: true           # 启用数据库去重
+  initial_hours: 168              # 首次运行时爬取最近N小时（7天）
+  
+  # 多页爬取配置
+  max_pages: 5                    # 最多爬取页数
+  max_consecutive_exists: 5       # 连续重复停止阈值
+  
+  # 完整爬取
+  max_per_keyword: 200            # 每个关键词最多爬取数量（保护性上限）
 
 # 定时调度配置
 scheduler:
@@ -64,18 +83,17 @@ analyzer:
   retry_times: 3
   fallback_to_rules: true  # API失败时降级到规则提取
 
-# 深度分析配置（新增）
+# 深度分析配置
 deep_analysis:
   enabled: true
   analyze_content: true      # 内容相关度分析
   analyze_attachments: true  # 附件分析
   extract_ai: true           # AI信息提取
   
-  # 附件处理
+  # 附件处理（统一使用 spider.max_attachment_size）
   download_attachments_for_analysis: true  # 只下载需要分析的附件
   analyze_pdf: true
   analyze_docx: true
-  max_attachment_size: 20    # MB
 
 # 评分配置（新增）
 scoring:

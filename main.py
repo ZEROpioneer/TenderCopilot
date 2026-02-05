@@ -1,16 +1,15 @@
 """TenderCopilot - 招投标智能助手 主程序"""
 
 import sys
-import yaml
 from pathlib import Path
 from loguru import logger
 from dotenv import load_dotenv
-import os
 
 # 加载环境变量
 load_dotenv()
 
 # 导入模块
+from src.config import ConfigManager
 from src.database.storage import DatabaseManager
 from src.spider.plap_spider import PLAPSpider
 from src.spider.attachment_handler import AttachmentHandler
@@ -49,57 +48,15 @@ class TenderCopilot:
         logger.info("🎯 TenderCopilot 初始化完成")
     
     def load_config(self):
-        """加载配置文件"""
-        # 主配置
-        with open('config/settings.yaml', 'r', encoding='utf-8') as f:
-            settings = yaml.safe_load(f)
-        
-        # 业务方向配置
-        with open('config/business_directions.yaml', 'r', encoding='utf-8') as f:
-            business = yaml.safe_load(f)
-        
-        # 通知配置
-        with open('config/notifications.yaml', 'r', encoding='utf-8') as f:
-            notifications = yaml.safe_load(f)
-        
-        # 筛选配置（新增）
+        """加载配置文件（使用新的配置管理器）"""
         try:
-            with open('config/filter_settings.yaml', 'r', encoding='utf-8') as f:
-                filter_settings = yaml.safe_load(f)
-        except FileNotFoundError:
-            logger.warning("⚠️ 未找到 filter_settings.yaml，将使用传统爬取模式")
-            filter_settings = {}
-        
-        # 搜索关键词配置（新增）
-        try:
-            with open('config/search_keywords.yaml', 'r', encoding='utf-8') as f:
-                search_config = yaml.safe_load(f)
-        except FileNotFoundError:
-            logger.warning("⚠️ 未找到 search_keywords.yaml，使用默认配置")
-            search_config = {}
-        
-        # 合并配置
-        config = {**settings}
-        config['business_directions'] = business['business_directions']
-        config['global_exclude'] = business['global_exclude']
-        config['filter_settings'] = filter_settings
-        config['search_keywords'] = search_config.get('search_keywords', {})
-        config['crawl_strategy'] = search_config.get('crawl_strategy', {})
-        config.update(notifications)
-        
-        # 处理环境变量
-        api_key_config = config['analyzer'].get('api_key', '')
-        if '${GEMINI_API_KEY}' in api_key_config:
-            config['analyzer']['api_key'] = os.getenv('GEMINI_API_KEY', '')
-        elif '${OPENAI_API_KEY}' in api_key_config:
-            config['analyzer']['api_key'] = os.getenv('OPENAI_API_KEY', '')
-        
-        # 处理企业微信 webhook（新增）
-        webhook_url = config.get('wechat_work', {}).get('webhook_url', '')
-        if '${WECHAT_WORK_WEBHOOK}' in webhook_url:
-            config['wechat_work']['webhook_url'] = os.getenv('WECHAT_WORK_WEBHOOK', '')
-        
-        return config
+            config_manager = ConfigManager()
+            config_manager.load_all()
+            logger.success("✅ 配置加载成功")
+            return config_manager
+        except Exception as e:
+            logger.error(f"❌ 配置加载失败: {e}")
+            raise
     
     def setup_logger(self):
         """配置日志"""
@@ -290,6 +247,8 @@ class TenderCopilot:
     def _is_new_announcement(self, announcement, last_crawl_time):
         """判断公告是否是新的（发布时间晚于上次爬取时间）
         
+        使用 DateParser 工具类进行日期解析
+        
         Args:
             announcement: 公告字典
             last_crawl_time: 上次爬取时间
@@ -303,24 +262,9 @@ class TenderCopilot:
                 # 如果没有发布时间，保守起见认为是新的
                 return True
             
-            # 尝试解析发布时间
-            from datetime import datetime
-            
-            # 尝试多种日期格式
-            date_formats = [
-                '%Y-%m-%d %H:%M:%S',
-                '%Y-%m-%d %H:%M',
-                '%Y-%m-%d',
-                '%Y年%m月%d日',
-            ]
-            
-            publish_date = None
-            for fmt in date_formats:
-                try:
-                    publish_date = datetime.strptime(publish_date_str, fmt)
-                    break
-                except:
-                    continue
+            # 使用工具类解析日期
+            from src.utils import DateParser
+            publish_date = DateParser.parse(publish_date_str)
             
             if not publish_date:
                 # 如果无法解析，保守起见认为是新的
@@ -328,8 +272,7 @@ class TenderCopilot:
                 return True
             
             # 比较时间
-            is_new = publish_date > last_crawl_time
-            return is_new
+            return publish_date > last_crawl_time
             
         except Exception as e:
             logger.debug(f"  ⚠️ 判断新公告时出错: {e}")
@@ -406,21 +349,24 @@ class TenderCopilot:
         
         return filtered
     
-    def deep_analyze_projects(self, projects):
-        """深度分析项目（内容+AI+附件+评分）
+    def _analyze_single_project(self, project_info):
+        """分析单个项目（可并发执行）
         
         Args:
-            projects: 项目列表
+            project_info: (index, total, project) 元组
+            
+        Returns:
+            更新后的 project 字典
         """
+        i, total, project = project_info
+        ann = project['announcement']
+        direction_id = project['matched_direction_id']
+        direction_config = self.config['business_directions'][direction_id]
         deep_analysis_enabled = self.config.get('deep_analysis', {}).get('enabled', True)
         
-        for i, project in enumerate(projects, 1):
-            ann = project['announcement']
-            direction_id = project['matched_direction_id']
-            direction_config = self.config['business_directions'][direction_id]
-            
-            logger.info(f"  📊 [{i}/{len(projects)}] 分析: {ann['title'][:40]}...")
-            
+        logger.info(f"  📊 [{i}/{total}] 分析: {ann['title'][:40]}...")
+        
+        try:
             # 1. 获取详情内容
             detail_content = ''
             if not ann.get('content'):
@@ -506,6 +452,58 @@ class TenderCopilot:
                 logger.success(f"     ✅ 评分: {score_info}")
             else:
                 logger.info(f"     ⚠️ 评分: {score_info} (未通过二次过滤)")
+            
+            return project
+            
+        except Exception as e:
+            logger.error(f"     ❌ 分析失败: {e}")
+            return project
+    
+    def deep_analyze_projects(self, projects):
+        """深度分析项目（并发版：内容+AI+附件+评分）
+        
+        Args:
+            projects: 项目列表
+        """
+        if not projects:
+            return
+        
+        # 获取并发配置
+        max_workers = self.config.get('spider', {}).get('max_concurrent_details', 3)
+        
+        # 如果只有1-2个项目，不启用并发
+        if len(projects) <= 2:
+            logger.info(f"项目数量少（{len(projects)}个），使用串行处理")
+            for i, project in enumerate(projects, 1):
+                self._analyze_single_project((i, len(projects), project))
+            return
+        
+        # 并发处理多个项目
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        logger.info(f"启用并发分析（{max_workers} 个工作线程）")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_project = {
+                executor.submit(
+                    self._analyze_single_project, 
+                    (i, len(projects), project)
+                ): project 
+                for i, project in enumerate(projects, 1)
+            }
+            
+            # 收集结果
+            completed = 0
+            for future in as_completed(future_to_project):
+                try:
+                    result = future.result()
+                    completed += 1
+                except Exception as e:
+                    logger.error(f"并发分析异常: {e}")
+                    completed += 1
+            
+            logger.info(f"✅ 并发分析完成：{completed}/{len(projects)} 个项目")
     
     def start_scheduler(self):
         """启动定时任务"""

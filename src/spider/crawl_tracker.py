@@ -16,11 +16,12 @@ class CrawlTracker:
         
         Args:
             db_manager: 数据库管理器
-            config: 配置字典
+            config: 配置字典或ConfigManager实例
         """
         self.db = db_manager
         self.config = config
-        self.crawl_strategy = config.get('filter_settings', {}).get('crawl_strategy', {})
+        # 优先使用新的配置结构，向后兼容旧配置
+        self.crawl_strategy = config.get('crawl_strategy', config.get('filter_settings', {}).get('crawl_strategy', {}))
         
         logger.info("✅ 爬取追踪器初始化成功")
     

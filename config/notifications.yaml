@@ -15,7 +15,7 @@ email:
   smtp_port: 465
   use_ssl: true
   sender: "tender@company.com"
-  sender_password: ""  # 建议使用环境变量 ${EMAIL_PASSWORD}
+  sender_password: "${EMAIL_PASSWORD}"  # 从环境变量读取
   recipients:
     - "user1@company.com"
     - "user2@company.com"
@@ -26,13 +26,13 @@ email:
 wechat:
   enabled: false
   service: "serverchan"  # serverchan, pushplus
-  token: ""  # 对应服务的 token
+  token: "${WECHAT_PERSONAL_TOKEN}"  # 从环境变量读取
 
 # 钉钉机器人（备用）
 dingtalk:
   enabled: false
-  webhook_url: ""
-  secret: ""  # 加签密钥
+  webhook_url: "${DINGTALK_WEBHOOK}"  # 从环境变量读取
+  secret: "${DINGTALK_SECRET}"  # 从环境变量读取
 
 # 通知规则
 notification_rules:

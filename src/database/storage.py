@@ -110,14 +110,50 @@ class DatabaseManager:
             )
         """)
         
-        # 创建索引以提高查询性能
+        # 创建索引以提高查询性能（优化版）
+        logger.debug("创建数据库索引...")
+        
+        # 公告表索引
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_announcements_id 
+            ON announcements(id)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_announcements_pub_date 
+            ON announcements(publish_date DESC)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_announcements_location 
+            ON announcements(location)
+        """)
+        
+        # 爬取历史表索引
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_crawl_time 
             ON crawl_history(crawl_time DESC)
         """)
         
+        # 筛选项目表索引
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_filtered_announcement_id 
+            ON filtered_projects(announcement_id)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_filtered_score 
+            ON filtered_projects(feasibility_score DESC)
+        """)
+        
+        # 分析结果表索引
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analysis_announcement_id 
+            ON analysis_results(announcement_id)
+        """)
+        
         self.conn.commit()
-        logger.info("✅ 数据库初始化完成")
+        logger.info("✅ 数据库初始化完成（含 7 个性能索引）")
     
     def save_announcement(self, announcement):
         """保存公告"""

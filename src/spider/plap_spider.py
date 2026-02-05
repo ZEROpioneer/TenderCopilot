@@ -6,12 +6,13 @@ import time
 import random
 import hashlib
 from datetime import datetime
+from typing import List, Dict, Optional, Any
 
 
 class PLAPSpider:
     """军队采购网爬虫"""
     
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]) -> None:
         self.config = config
         self.base_url = config['target_sites']['plap']['base_url']
         self.list_url = config['target_sites']['plap']['announcement_list_url']
@@ -25,6 +26,13 @@ class PLAPSpider:
         user_agent = config['spider'].get('user_agent')
         if user_agent:
             self.options.set_user_agent(user_agent)
+        
+        # 等待时间配置（性能优化）
+        spider_config = config.get('spider', {})
+        self.wait_ajax_load = spider_config.get('wait_ajax_load', 0.5)
+        self.wait_page_refresh = spider_config.get('wait_page_refresh', 1)
+        self.wait_between_pages = spider_config.get('wait_between_pages', 2)
+        self.wait_retry = spider_config.get('retry_delay', 2)
         
         self.page = None
     
@@ -58,12 +66,12 @@ class PLAPSpider:
             except Exception as e:
                 logger.warning(f"   ❌ 页面访问失败: {e}")
                 if retry < max_retries - 1:
-                    time.sleep(2)
+                    time.sleep(self.wait_retry)
                     continue
                 return False
             
             logger.debug("   ⏳ 等待页面基础加载...")
-            time.sleep(3)
+            time.sleep(self.wait_page_refresh)
             
             # 等待AJAX加载完成 - 等待公告列表出现
             logger.debug("   ⏳ 等待公告列表加载（AJAX异步）...")
@@ -76,9 +84,9 @@ class PLAPSpider:
                 logger.info("   💡 尝试手动触发...")
                 try:
                     self.page.scroll.to_bottom()
-                    time.sleep(3)
+                    time.sleep(self.wait_ajax_load)
                     self.page.scroll.to_top()
-                    time.sleep(3)
+                    time.sleep(self.wait_ajax_load)
                 except:
                     pass
             
@@ -92,8 +100,8 @@ class PLAPSpider:
                     if len(lis) == 0:
                         logger.warning("   ❌ 列表为空！AJAX未加载")
                         if retry < max_retries - 1:
-                            logger.info("   💡 将在2秒后重试...")
-                            time.sleep(2)
+                            logger.info(f"   💡 将在{self.wait_retry}秒后重试...")
+                            time.sleep(self.wait_retry)
                             continue
                         return False
                     else:
@@ -108,7 +116,7 @@ class PLAPSpider:
             except Exception as e:
                 logger.warning(f"   ❌ 诊断失败: {e}")
                 if retry < max_retries - 1:
-                    time.sleep(2)
+                    time.sleep(self.wait_retry)
                     continue
                 return False
         
@@ -369,7 +377,7 @@ class PLAPSpider:
         
         try:
             self.page.get(url)
-            time.sleep(1)  # 减少等待时间以加快速度
+            time.sleep(self.wait_page_refresh)  # 可配置的等待时间
             
             # 智能提取内容 - 尝试多种选择器
             content = ''
@@ -486,7 +494,7 @@ class PLAPSpider:
         try:
             # 访问列表页
             self.page.get(self.list_url)
-            time.sleep(2)
+            time.sleep(self.wait_page_refresh)
             
             # 查找搜索框并输入关键词
             search_success = self._perform_search(keyword)
@@ -502,7 +510,7 @@ class PLAPSpider:
                 logger.info(f"   📄 解析第 {page_num} 页...")
                 
                 # 等待页面加载
-                time.sleep(2)
+                time.sleep(self.wait_page_refresh)
                 
                 # 查找公告列表项
                 items = self._find_announcement_items()
@@ -612,7 +620,7 @@ class PLAPSpider:
             # 清空并输入关键词
             search_box.clear()
             search_box.input(keyword)
-            time.sleep(0.5)
+            time.sleep(self.wait_ajax_load)
             
             # 查找并点击搜索按钮
             submit_button = None
@@ -639,7 +647,7 @@ class PLAPSpider:
                 logger.info("   ⚠️ 未找到搜索按钮，尝试回车")
                 search_box.input('\n')
             
-            time.sleep(2)  # 等待搜索结果加载
+            time.sleep(self.wait_page_refresh)  # 等待搜索结果加载
             logger.info("   ✅ 搜索提交成功")
             return True
             
@@ -728,8 +736,8 @@ class PLAPSpider:
                 logger.warning(f"   ⚠️ 等待{max_wait}秒后仍未检测到列表刷新")
                 # 即使未检测到刷新也继续（可能是页面结构变化）
             
-            # 额外等待1秒确保完全加载
-            time.sleep(1)
+            # 额外等待确保完全加载
+            time.sleep(self.wait_ajax_load)
             return True
             
         except Exception as e:
@@ -808,8 +816,40 @@ class PLAPSpider:
         logger.info("🔄 使用传统爬取模式")
         return self.fetch_announcements()
     
-    def close(self):
+    def close(self) -> None:
         """关闭浏览器"""
         if self.page:
-            self.page.quit()
-            logger.info("🔚 浏览器已关闭")
+            try:
+                self.page.quit()
+                logger.info("🔚 浏览器已关闭")
+            except Exception as e:
+                logger.warning(f"关闭浏览器时出错: {e}")
+            finally:
+                self.page = None
+    
+    def __enter__(self) -> 'PLAPSpider':
+        """上下文管理器入口
+        
+        使用示例:
+            with PLAPSpider(config) as spider:
+                announcements = spider.fetch_announcements()
+        
+        Returns:
+            self: PLAPSpider 实例
+        """
+        self.init_browser()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """上下文管理器退出
+        
+        Args:
+            exc_type: 异常类型
+            exc_val: 异常值
+            exc_tb: 异常追踪
+            
+        Returns:
+            False: 不抑制异常，让异常继续传播
+        """
+        self.close()
+        return False  # 不抑制异常

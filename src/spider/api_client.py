@@ -18,9 +18,10 @@ class PLAPApiClient:
         """初始化 API 客户端
         
         Args:
-            config: 配置字典，包含 filter_settings
+            config: 配置字典或ConfigManager实例
         """
         self.config = config
+        # 向后兼容：优先使用新配置，如果不存在则使用旧配置
         self.filter_config = config.get('filter_settings', {})
         
         # API 配置
