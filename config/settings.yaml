@@ -40,11 +40,12 @@ crawl_strategy:
   initial_hours: 168              # 首次运行时爬取最近N小时（7天）
   
   # 多页爬取配置
-  max_pages: 5                    # 最多爬取页数
-  max_consecutive_exists: 5       # 连续重复停止阈值
+  max_pages: null                 # 不限制页数（null=无限制，直到连续重复停止）
+  max_consecutive_exists: 5       # 连续重复停止阈值（主要停止机制）
   
-  # 完整爬取
-  max_per_keyword: 200            # 每个关键词最多爬取数量（保护性上限）
+  # 保护性上限（防止异常情况无限爬取）
+  max_total_items: 300            # 单次爬取最多条数（达到后警告并停止）
+  warn_threshold: 200             # 警告阈值（爬取超过此数量时发出提醒）
 
 # 定时调度配置
 scheduler:

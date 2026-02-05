@@ -123,21 +123,32 @@ class PLAPSpider:
         logger.error(f"❌ 尝试{max_retries}次后仍然失败")
         return False
     
-    def fetch_announcements(self, max_pages=5, db_manager=None, max_consecutive_exists=5):
+    def fetch_announcements(self, max_pages=None, db_manager=None, max_consecutive_exists=5, max_total_items=300, warn_threshold=200):
         """爬取招标公告列表（多页增量版本）
         
+        停止策略（按优先级）：
+        1. 连续重复停止（主要机制）：连续N条都已存在，说明已爬到历史数据
+        2. 保护性上限（安全机制）：爬取总数达到上限，防止异常情况无限爬取
+        3. 警告阈值：爬取数量超过阈值时发出提醒
+        
         Args:
-            max_pages: 最多爬取页数（默认5页）
+            max_pages: 最多爬取页数（None=不限制，推荐）
             db_manager: 数据库管理器（用于去重检查）
             max_consecutive_exists: 连续多少条重复后停止（默认5）
+            max_total_items: 保护性上限，单次最多爬取条数（默认300）
+            warn_threshold: 警告阈值，超过后发出提醒（默认200）
             
         Returns:
             公告列表
         """
         logger.info(f"🔍 开始爬取招标公告: {self.list_url}")
-        logger.info(f"   最多爬取: {max_pages} 页")
+        if max_pages:
+            logger.info(f"   页数限制: {max_pages} 页")
+        else:
+            logger.info(f"   页数限制: 无限制（直到连续重复停止）")
         if db_manager:
             logger.info(f"   增量策略: 连续{max_consecutive_exists}条重复停止")
+        logger.info(f"   保护上限: 最多{max_total_items}条（警告阈值: {warn_threshold}条）")
         
         if not self.page:
             if not self.init_browser():
@@ -160,8 +171,12 @@ class PLAPSpider:
             # 多页爬取
             page_num = 1
             should_stop = False
+            warned = False  # 是否已发出警告
             
-            while page_num <= max_pages and not should_stop:
+            # 如果 max_pages 为 None，设置为一个很大的数字
+            effective_max_pages = max_pages if max_pages else 9999
+            
+            while page_num <= effective_max_pages and not should_stop:
                 logger.info(f"📄 第 {page_num} 页...")
                 
                 # 智能查找公告列表项
@@ -206,12 +221,25 @@ class PLAPSpider:
                 logger.info(f"   本页统计: 新增 {page_new} 条，重复 {page_duplicate} 条")
                 logger.info(f"   累计爬取: {len(all_announcements)} 条新公告")
                 
+                # 检查停止条件
                 if should_stop:
-                    logger.info(f"   🛑 达到停止条件")
+                    logger.info(f"   🛑 达到连续重复停止条件")
                     break
                 
+                # 检查保护性上限
+                if len(all_announcements) >= max_total_items:
+                    logger.warning(f"   🛑 达到保护性上限（{max_total_items}条），停止爬取")
+                    logger.warning(f"   ⚠️ 这可能表示系统配置需要调整（连续重复阈值或去重机制）")
+                    break
+                
+                # 检查警告阈值
+                if len(all_announcements) >= warn_threshold and not warned:
+                    logger.warning(f"   ⚠️ 已爬取{len(all_announcements)}条，超过警告阈值（{warn_threshold}）")
+                    logger.warning(f"   ⚠️ 仍在继续爬取，直到连续{max_consecutive_exists}条重复...")
+                    warned = True
+                
                 # 尝试翻页
-                if page_num < max_pages:
+                if page_num < effective_max_pages:
                     logger.info(f"   📖 尝试翻到第 {page_num + 1} 页...")
                     if self._goto_next_page():
                         page_num += 1
@@ -219,7 +247,9 @@ class PLAPSpider:
                         logger.info("   ⏹️ 没有下一页")
                         break
                 else:
-                    logger.info(f"   ⏹️ 达到最大页数限制（{max_pages}页）")
+                    # 只有设置了 max_pages 时才会触发这个分支
+                    if max_pages:
+                        logger.info(f"   ⏹️ 达到最大页数限制（{max_pages}页）")
                     break
             
             logger.success(f"✅ 爬取完成：共爬取 {page_num} 页，获得 {len(all_announcements)} 条新公告")

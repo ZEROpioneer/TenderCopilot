@@ -150,13 +150,17 @@ class TenderCopilot:
                 
                 # 传递数据库管理器用于去重
                 crawl_config = self.config.get('crawl_strategy', {})
-                max_pages = crawl_config.get('max_pages', 5)  # 默认5页
+                max_pages = crawl_config.get('max_pages')  # None = 不限制页数
                 max_consecutive = crawl_config.get('max_consecutive_exists', 5)  # 连续5条重复停止
+                max_total_items = crawl_config.get('max_total_items', 300)  # 保护性上限
+                warn_threshold = crawl_config.get('warn_threshold', 200)  # 警告阈值
                 
                 all_announcements = self.spider.fetch_announcements(
                     max_pages=max_pages,
                     db_manager=self.db,
-                    max_consecutive_exists=max_consecutive
+                    max_consecutive_exists=max_consecutive,
+                    max_total_items=max_total_items,
+                    warn_threshold=warn_threshold
                 )
                 
                 logger.info(f"  ✅ 爬取成功，共获取 {len(all_announcements)} 条新公告")
