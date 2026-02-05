@@ -121,7 +121,7 @@ class DatabaseManager:
         
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_announcements_pub_date 
-            ON announcements(publish_date DESC)
+            ON announcements(pub_date DESC)
         """)
         
         cursor.execute("""
