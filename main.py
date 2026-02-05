@@ -249,6 +249,10 @@ class TenderCopilot:
         
         使用 DateParser 工具类进行日期解析
         
+        特别处理：
+        - 如果日期只有年月日（时分秒为00:00:00），则只比较日期部分
+        - 这样可以避免同一天的公告被错误过滤
+        
         Args:
             announcement: 公告字典
             last_crawl_time: 上次爬取时间
@@ -264,6 +268,8 @@ class TenderCopilot:
             
             # 使用工具类解析日期
             from src.utils import DateParser
+            from datetime import datetime
+            
             publish_date = DateParser.parse(publish_date_str)
             
             if not publish_date:
@@ -271,8 +277,18 @@ class TenderCopilot:
                 logger.debug(f"  ⚠️ 无法解析发布时间: {publish_date_str}")
                 return True
             
-            # 比较时间
-            return publish_date > last_crawl_time
+            # 关键修复：如果日期只有年月日（时分秒为00:00:00）
+            # 说明列表页没有提供精确时间，只比较日期部分
+            if publish_date.time() == datetime.min.time():
+                # 只比较日期：同一天或更晚的都认为是新的
+                is_new = publish_date.date() >= last_crawl_time.date()
+                logger.debug(f"  📅 日期比较: {publish_date.date()} >= {last_crawl_time.date()} = {is_new}")
+                return is_new
+            else:
+                # 有具体时间，正常比较
+                is_new = publish_date > last_crawl_time
+                logger.debug(f"  ⏰ 时间比较: {publish_date} > {last_crawl_time} = {is_new}")
+                return is_new
             
         except Exception as e:
             logger.debug(f"  ⚠️ 判断新公告时出错: {e}")
