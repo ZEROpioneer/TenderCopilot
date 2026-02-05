@@ -32,7 +32,7 @@ class KeywordMatcher:
         
         # 检查排除关键词
         if self._should_exclude(text):
-            logger.info(f"⏭️ 跳过（包含排除关键词）: {title[:50]}")
+            logger.debug(f"⏭️ 跳过（包含排除关键词）: {title[:50]}")
             return None
         
         results = {}
@@ -46,7 +46,7 @@ class KeywordMatcher:
                     'matched_keywords': matched_keywords,
                     'location_required': direction.get('location_required', False)
                 }
-                logger.info(f"✅ 匹配到 [{direction['name']}]: {title[:40]}... (评分: {score:.2f}, 关键词: {matched_keywords})")
+                logger.debug(f"✅ 匹配到 [{direction['name']}]: {title[:40]}... (评分: {score:.2f}, 关键词: {matched_keywords})")
         
         if not results:
             logger.debug(f"⏭️ 无匹配: {title[:50]}")

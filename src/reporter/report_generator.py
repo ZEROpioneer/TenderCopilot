@@ -82,12 +82,12 @@ class MarkdownReporter:
         """格式化单个项目"""
         ann = project['announcement']
         feas = project['feasibility']
-        direction = project['matched_directions'][0]
+        direction_name = self._get_direction_name(project)
         
         lines = []
         lines.append(f"### {index}. {ann['title']}\n")
         lines.append(f"**项目编号**: {ann.get('id', 'N/A')}  ")
-        lines.append(f"**业务方向**: {direction['name']}  ")
+        lines.append(f"**业务方向**: {direction_name}  ")
         lines.append(f"**可行性评分**: {feas['total']} / 100 {self._get_stars(feas['total'])}\n")
         
         # 时间信息突出显示
@@ -124,7 +124,7 @@ class MarkdownReporter:
         """格式化备选项目（简化信息，支持人工复核）"""
         ann = project['announcement']
         feas = project['feasibility']
-        direction = project['matched_directions'][0]
+        direction_name = self._get_direction_name(project)
         
         lines = []
         lines.append(f"### {index}. {ann['title']}\n")
@@ -132,7 +132,7 @@ class MarkdownReporter:
         # 基本信息（一行显示）
         basic_info = []
         basic_info.append(f"**评分**: {feas['total']}/100")
-        basic_info.append(f"**方向**: {direction['name']}")
+        basic_info.append(f"**方向**: {direction_name}")
         if ann.get('location'):
             basic_info.append(f"**地域**: {ann['location']}")
         lines.append(f"{' | '.join(basic_info)}  ")
@@ -153,6 +153,32 @@ class MarkdownReporter:
         
         lines.append("")
         return "\n".join(lines)
+    
+    def _get_direction_name(self, project):
+        """从项目结构中安全获取业务方向名称
+        
+        兼容两种结构：
+        - 旧结构：project['matched_directions'] 为方向列表
+        - 新结构：使用 matched_direction_id + match_results
+        """
+        # 兼容旧字段
+        if 'matched_directions' in project and project['matched_directions']:
+            direction = project['matched_directions'][0]
+            return direction.get('name', '未知方向')
+        
+        # 新结构：根据 matched_direction_id 和 match_results 推断
+        direction_id = project.get('matched_direction_id')
+        match_results = project.get('match_results') or {}
+        
+        if direction_id and direction_id in match_results:
+            return match_results[direction_id].get('name', direction_id)
+        
+        # 兜底：取任意一个匹配方向名称
+        if isinstance(match_results, dict) and match_results:
+            any_direction = next(iter(match_results.values()))
+            return any_direction.get('name', '未知方向')
+        
+        return '未知方向'
     
     def _get_stars(self, score):
         """评分星级"""

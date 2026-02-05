@@ -186,7 +186,7 @@ class PLAPSpider:
                     logger.warning(f"   ⚠️ 未找到公告列表项，停止")
                     break
                 
-                logger.info(f"   找到 {len(items)} 个公告项")
+                logger.debug(f"   找到 {len(items)} 个公告项")
                 
                 page_new = 0
                 page_duplicate = 0
@@ -218,8 +218,8 @@ class PLAPSpider:
                         logger.warning(f"   ⚠️ 解析公告项失败: {e}")
                         continue
                 
-                logger.info(f"   本页统计: 新增 {page_new} 条，重复 {page_duplicate} 条")
-                logger.info(f"   累计爬取: {len(all_announcements)} 条新公告")
+                logger.debug(f"   本页统计: 新增 {page_new} 条，重复 {page_duplicate} 条")
+                logger.debug(f"   累计爬取: {len(all_announcements)} 条新公告")
                 
                 # 检查停止条件
                 if should_stop:
@@ -354,26 +354,43 @@ class PLAPSpider:
             # ✅ 关键修复：使用验证成功的地域提取逻辑
             # HTML结构：<li><a>...</a><span>类型</span><span>地域</span><span>日期</span></li>
             spans = item.eles('tag:span')
+            notice_type = '未知公告类型'
             location = '未知'
             date_text = '未知'
             
             try:
                 if len(spans) >= 3:
                     # 标准情况：spans[0]=类型, spans[1]=地域, spans[2]=日期
-                    location = spans[1].text.strip()
-                    date_text = spans[2].text.strip()
+                    notice_type = spans[0].text.strip() or notice_type
+                    location = spans[1].text.strip() or location
+                    date_text = spans[2].text.strip() or date_text
                 elif len(spans) == 2:
-                    # 2个span：可能是地域+日期
-                    location = spans[0].text.strip()
-                    date_text = spans[1].text.strip()
+                    # 2个span：可能是类型+日期 或 地域+日期
+                    first = spans[0].text.strip()
+                    second = spans[1].text.strip()
+                    if re.match(r'\d{4}-\d{2}-\d{2}$', second):
+                        # 视作：类型/地域 + 日期
+                        date_text = second
+                        # 尝试从第一列中识别“公告”字样作为类型
+                        if '公告' in first or '公示' in first:
+                            notice_type = first
+                        else:
+                            location = first
+                    else:
+                        # 视作：地域 + 其他信息
+                        location = first
+                        date_text = second
                 elif len(spans) == 1:
-                    # 只有1个span：可能是日期
+                    # 只有1个span：可能是日期或类型
                     span_text = spans[0].text.strip()
                     if re.match(r'\d{4}-\d{2}-\d{2}$', span_text):
                         date_text = span_text
+                    elif '公告' in span_text or '公示' in span_text:
+                        notice_type = span_text
                     else:
                         location = span_text
-            except:
+            except Exception:
+                # 解析异常时保留默认值，避免中断
                 pass
             
             # 如果日期不是标准格式，尝试提取
@@ -392,6 +409,7 @@ class PLAPSpider:
                 'url': url,
                 'pub_date': date_text,
                 'publish_date': date_text,  # 统一字段名
+                'notice_type_raw': notice_type,
                 'location': location,
                 'summary': '',
                 'crawled_at': datetime.now().isoformat()

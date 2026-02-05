@@ -17,6 +17,7 @@ from src.spider.crawl_tracker import CrawlTracker
 from src.filter.keyword_matcher import KeywordMatcher
 from src.filter.location_matcher import LocationMatcher
 from src.filter.deduplicator import Deduplicator
+from src.filter.notice_type_filter import NoticeTypeFilter
 from src.analyzer.info_extractor import InfoExtractor
 from src.analyzer.feasibility_scorer import FeasibilityScorer
 from src.reporter.report_generator import MarkdownReporter
@@ -59,28 +60,47 @@ class TenderCopilot:
             raise
     
     def setup_logger(self):
-        """配置日志"""
+        """配置日志（控制台精简输出 + 详细日志文件）"""
+        from datetime import datetime
+        from pathlib import Path
+
         log_config = self.config['logging']
-        
+
+        # 兼容旧配置：如果未配置 console_level / file_level，则回退到 level
+        console_level = log_config.get('console_level', log_config.get('level', 'INFO'))
+        file_level = log_config.get('file_level', log_config.get('level', 'INFO'))
+        detail_dir = log_config.get('detail_dir')
+
+        # 生成本次运行的详细日志文件路径
+        if detail_dir:
+            detail_path = Path(detail_dir)
+            detail_path.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file_path = detail_path / f"run_{timestamp}.log"
+        else:
+            # 兼容旧配置：仍然使用 log_file
+            log_file_path = Path(log_config['log_file'])
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
         # 移除默认处理器
         logger.remove()
-        
-        # 添加控制台输出
+
+        # 控制台输出：只展示关键步骤和统计信息
         logger.add(
             sys.stdout,
             format=log_config['format'],
-            level=log_config['level']
+            level=console_level,
         )
-        
-        # 添加文件输出
+
+        # 详细文件日志：记录完整 DEBUG 级别信息
         logger.add(
-            log_config['log_file'],
+            str(log_file_path),
             format=log_config['format'],
-            level=log_config['level'],
+            level=file_level,
             rotation=log_config['rotation'],
             retention=log_config['retention'],
             compression=log_config['compression'],
-            encoding='utf-8'
+            encoding='utf-8',
         )
     
     def init_components(self):
@@ -95,13 +115,11 @@ class TenderCopilot:
         self.attachment_handler = AttachmentHandler(self.config)
         self.keyword_matcher = KeywordMatcher(self.config)
         self.location_matcher = LocationMatcher()
+        self.notice_type_filter = NoticeTypeFilter(self.config)
         self.deduplicator = Deduplicator(self.db)
         
-        # 检查是否配置了 API Key
-        if self.config['analyzer'].get('api_key'):
-            self.analyzer = InfoExtractor(self.config)
-        else:
-            logger.warning("⚠️ 未配置 API Key，AI 分析功能将不可用")
+        # 初始化 AI 信息提取器（内部根据 provider / 配置自行决定是否可用）
+        self.analyzer = InfoExtractor(self.config)
         
         # 新增分析器
         from src.analyzer.content_analyzer import ContentAnalyzer
@@ -198,10 +216,6 @@ class TenderCopilot:
             filtered = self.filter_announcements(all_announcements)
             logger.info(f"✅ 筛选出 {len(filtered)} 个匹配项目（匹配率: {len(filtered)/len(all_announcements)*100:.1f}%）")
             
-            if not filtered:
-                logger.warning("⚠️ 未找到匹配项目，流程结束")
-                return
-            
             # 步骤5: 深度分析（只分析通过初筛的项目）
             logger.info("🤖 步骤 5/7: 深度分析（内容+AI+附件）")
             self.deep_analyze_projects(filtered)
@@ -222,10 +236,6 @@ class TenderCopilot:
             
             if alternatives:
                 logger.info(f"  📌 备选项目: {len(alternatives)} 个（评分<60分，可人工复核）")
-            
-            if not filtered:
-                logger.warning("⚠️ 没有任何项目，流程结束")
-                return
             
             # 步骤7: 生成报告并推送（包含所有项目）
             logger.info("📝 步骤 7/7: 生成报告并推送通知")
@@ -365,28 +375,35 @@ class TenderCopilot:
                 direction_config
             )
             
-            # 如果地域要求不通过，跳过
+            # 如果地域要求不通过，跳过（详细原因仅记录在调试日志中）
             if not location_result['matched']:
-                logger.info(f"⏭️ 跳过（地域不符-{direction_config['name']}）: {ann['title'][:50]}...")
+                logger.debug(f"⏭️ 跳过（地域不符-{direction_config['name']}）: {ann['title'][:50]}...")
+                continue
+
+            # 4. 公告类型过滤（招标公告 / 询价公告 / 更正公告等）
+            type_result = self.notice_type_filter.match(ann)
+            if not type_result["matched"]:
+                logger.debug(
+                    f"⏭️ 跳过（公告类型不符-{type_result['normalized_type']}，原因: {type_result['reason']}）: "
+                    f"{ann['title'][:50]}..."
+                )
                 continue
             
-            # 4. 去重
+            # 5. 去重
             if self.deduplicator.is_duplicate(ann):
                 logger.debug(f"⏭️ 跳过（重复）: {ann['title'][:50]}...")
                 continue
             
-            # 5. 保存到数据库
+            # 6. 保存到数据库
             self.db.save_announcement(ann)
             
-            # 6. 添加到结果（暂时不计算评分，等深度分析后再计算）
+            # 7. 添加到结果（暂时不计算评分，等深度分析后再计算）
             filtered.append({
                 'announcement': ann,
                 'matched_direction_id': best_direction_id,
                 'match_results': match_results,
                 'location_result': location_result
             })
-            
-            logger.info(f"✅ 通过初筛: {ann['title'][:50]}... ({direction_config['name']})")
         
         return filtered
     

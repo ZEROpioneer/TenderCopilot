@@ -66,24 +66,42 @@ database:
   backup_dir: "data/backups"
   auto_vacuum: true
 
-# AI 分析配置
+# AI 分析配置（默认对接智谱 GLM 的 OpenAI 兼容接口）
 analyzer:
-  # AI 提供商选择: 'openai' 或 'gemini'
-  provider: "gemini"  # 改为 gemini
+  # AI 提供商选择: 'openai' / 'gemini' / 'custom_openai' / 'none'
+  # - 推荐：使用智谱 GLM 的 OpenAI 兼容接口 => 'custom_openai'
+  # - 如果暂时不用模型，可以设为 'none'
+  provider: "custom_openai"
   
-  # API Key（从环境变量读取）
-  api_key: "${GEMINI_API_KEY}"  # 改为 GEMINI_API_KEY
+  # 通用 API Key（仅在 provider=openai 或 gemini 时使用）
+  api_key: "${GEMINI_API_KEY}"
   
-  # 模型选择
-  # Gemini 可选: gemini-pro, gemini-1.5-pro, gemini-1.5-flash
+  # 模型选择（仅在 provider=openai 或 gemini 时使用）
+  # Gemini 可选: gemini-pro, gemini-1.5-pro
   # OpenAI 可选: gpt-4o-mini, gpt-4o, gpt-4-turbo
-  model: "gemini-1.5-flash"  # Gemini 最快最便宜的模型
+  model: "gemini-1.5-pro"
   
   max_tokens: 2000
   temperature: 0.3  # 降低随机性
   timeout: 30
   retry_times: 3
   fallback_to_rules: true  # API失败时降级到规则提取
+
+  # 自定义 OpenAI 兼容接口（推荐：智谱 GLM OpenAI 兼容接口）
+  # 文档：https://docs.bigmodel.cn/cn/guide/develop/openai/introduction
+  # 官方示例：
+  #   client = OpenAI(
+  #       api_key="your-zhipuai-api-key",
+  #       base_url="https://open.bigmodel.cn/api/paas/v4/"
+  #   )
+  #
+  # 在本项目中只需要配置：
+  #   - custom_base_url  为上面的 base_url
+  #   - custom_api_key   为你的智谱 API Key（通过环境变量传入）
+  #   - custom_model     为你选用的 GLM 模型名（如 glm-4-flash）
+  custom_base_url: "https://open.bigmodel.cn/api/coding/paas/v4"   # 智谱 OpenAI 兼容 base_url（末尾不必加 / ）
+  custom_api_key: "${CUSTOM_OPENAI_API_KEY}"                # 智谱 API Key（在 .env 中配置）
+  custom_model: "glm-4-flash"                                   # 智谱模型名称（可按实际修改）
 
 # 深度分析配置
 deep_analysis:
@@ -112,6 +130,24 @@ scoring:
     deadline_adequacy: 10    # 时间充足度
     location_bonus: 10       # 地域加分（额外）
   
+  # 公告类型过滤配置（结合列表页公告类型）
+announcement_filter:
+  notice_types:
+    enabled: true
+    # 业务优先关注的公告类型：刚开始、可报名/开标的阶段
+    include:
+      - "招标公告"
+      - "采购公告"
+      - "竞争性谈判公告"
+      - "询价公告"      # 包含简易询价公告等
+    # 是否关注更正公告（更正原招标信息）
+    include_correction: true
+    # 明确排除的公告类型：结果类/废标类
+    exclude:
+      - "废标公告"
+      - "中标公告"
+      - "成交公告"
+  
 # 报告生成配置
 reporter:
   output_format: "markdown"  # markdown, html, json
@@ -124,11 +160,14 @@ reporter:
 # 日志配置
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  console_level: "INFO"  # 终端显示级别
+  file_level: "DEBUG"    # 详细日志级别
   format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
   rotation: "10 MB"  # 日志轮转大小
   retention: "30 days"  # 日志保留时间
   compression: "zip"  # 压缩格式
-  log_file: "logs/tendercopilot.log"
+  log_file: "logs/tendercopilot.log"  # 总体日志（兼容旧配置，detail_dir 优先）
+  detail_dir: "logs/detail"          # 详细日志目录（每次运行一个独立文件）
 
 # 性能监控配置
 monitoring:
