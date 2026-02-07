@@ -214,6 +214,8 @@
     .config-hint { margin: 0.75rem 0 0 0; font-size: 0.8125rem; color: var(--text-muted); }
     .config-hint code { background: #f3f4f6; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8125rem; }
     .config-provider-badge { margin: 0.35rem 0 0 0; font-size: 0.8125rem; color: var(--primary); font-weight: 500; }
+    .preset-chks { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.25rem 0; }
+    .preset-chks .preset-chk { margin: 0; }
     .chart-wrap { background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem; margin-top: 1rem; max-width: 560px; height: 220px; }
     .config-subnav {
       display: flex;
@@ -314,6 +316,15 @@
                     <input type="text" x-model="dir.keywords_exclude_str" placeholder="可选" />
                   </div>
                   <label class="checkbox-label"><input type="checkbox" x-model="dir.location_required" /> 地域限制</label>
+                  <template x-if="dir.location_required">
+                    <div class="form-row" style="margin-top:0.5rem;">
+                      <label>优先地域（省/市，可选）</label>
+                      <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                        <input type="text" x-model="dir.location_priority.province" placeholder="省" style="max-width:8rem;" />
+                        <input type="text" x-model="dir.location_priority.city" placeholder="市" style="max-width:8rem;" />
+                      </div>
+                    </div>
+                  </template>
                 </div>
               </template>
               <div class="add-direction">
@@ -329,11 +340,24 @@
           <div class="config-subpanel" :class="{ active: configSubTab==='notice' }">
             <section class="config-block">
               <h3>公告类型</h3>
-              <label>保留类型（include）</label>
-              <input type="text" x-model="noticeTypesIncludeStr" placeholder="招标公告, 采购公告, 询价公告（逗号分隔，可自定义）" />
-              <label>排除类型（exclude）</label>
-              <input type="text" x-model="noticeTypesExcludeStr" placeholder="废标公告, 流标公告, 中标公告（逗号分隔）" />
-              <label class="checkbox-label"><input type="checkbox" x-model="config.settings.announcement_filter.notice_types.include_correction" /> 包含更正公告</label>
+              <label class="checkbox-label"><input type="checkbox" x-model="config.settings.announcement_filter.notice_types.enabled" /> 启用公告类型过滤</label>
+              <p class="config-desc">要保留的公告类型（多选 + 可补充自定义）：</p>
+              <div class="preset-chks">
+                <template x-for="p in presetInclude" :key="p">
+                  <label class="checkbox-label preset-chk"><input type="checkbox" :checked="noticeTypesIncludePreset.includes(p)" @change="togglePresetInclude(p, $event.target.checked)" /> <span x-text="p"></span></label>
+                </template>
+              </div>
+              <label>其他保留类型（逗号分隔）</label>
+              <input type="text" x-model="noticeTypesIncludeCustom" placeholder="可自定义输入" />
+              <p class="config-desc" style="margin-top:1rem;">要排除的公告类型：</p>
+              <div class="preset-chks">
+                <template x-for="p in presetExclude" :key="p">
+                  <label class="checkbox-label preset-chk"><input type="checkbox" :checked="noticeTypesExcludePreset.includes(p)" @change="togglePresetExclude(p, $event.target.checked)" /> <span x-text="p"></span></label>
+                </template>
+              </div>
+              <label>其他排除类型（逗号分隔）</label>
+              <input type="text" x-model="noticeTypesExcludeCustom" placeholder="可自定义输入" />
+              <label class="checkbox-label" style="margin-top:0.75rem;"><input type="checkbox" x-model="config.settings.announcement_filter.notice_types.include_correction" /> 包含更正公告</label>
             </section>
           </div>
 
@@ -341,13 +365,15 @@
             <section class="config-block">
               <h3>AI 模型</h3>
               <p class="config-desc">使用任意 OpenAI 兼容接口（智谱、OpenAI、Gemini、DeepSeek 等），填写接口地址后会自动识别供应商。</p>
-              <label>是否使用 AI</label>
+              <label>AI 提供商</label>
               <select x-model="config.settings.analyzer.provider">
-                <option value="custom_openai">自定义 OpenAI 兼容接口</option>
+                <option value="custom_openai">自定义 OpenAI 兼容接口（智谱/DeepSeek 等）</option>
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Gemini</option>
                 <option value="none">不使用 AI</option>
               </select>
 
-              <template x-if="config.settings.analyzer.provider === 'custom_openai'">
+              <template x-if="config.settings.analyzer.provider === 'custom_openai' || config.settings.analyzer.provider === 'openai' || config.settings.analyzer.provider === 'gemini'">
                 <div class="config-provider-group">
                   <label>接口地址（Base URL）</label>
                   <input type="text" x-model="config.settings.analyzer.custom_base_url" placeholder="https://open.bigmodel.cn/api/paas/v4 或 https://api.openai.com/v1" />
@@ -365,6 +391,7 @@
               <template x-if="config.settings.analyzer.provider === 'none'">
                 <p class="config-hint">当前不使用 AI，将仅通过规则提取信息。</p>
               </template>
+              <p class="config-hint" x-show="config.settings.analyzer.provider !== 'none'">API Key 保存在 .env，不会出现在 YAML 中。</p>
             </section>
           </div>
 
@@ -372,17 +399,31 @@
             <section class="config-block">
               <h3>企业微信 / 邮箱</h3>
               <label class="checkbox-label"><input type="checkbox" x-model="config.notifications.wechat_work.enabled" /> 启用企业微信</label>
-              <label>Webhook URL（留空不修改）</label>
+              <label>Webhook URL（留空不修改，写入 .env）</label>
               <div>
                 <input type="password" x-model="envInputs.WECHAT_WORK_WEBHOOK" placeholder="已配置则显示为 ***" />
                 <span class="env-hint" x-show="config.env_configured && config.env_configured.WECHAT_WORK_WEBHOOK">已配置</span>
               </div>
+              <label>@ 用户（可选，逗号分隔）</label>
+              <input type="text" x-model="wechatMentionStr" placeholder="如 @all 或 zhangsan,lisi" />
+              <label>重试次数 / 超时（秒，可选）</label>
+              <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                <input type="number" x-model.number="config.notifications.wechat_work.retry_times" min="0" style="max-width:5rem;" />
+                <input type="number" x-model.number="config.notifications.wechat_work.timeout" min="1" style="max-width:5rem;" />
+              </div>
               <div class="divider"></div>
               <label class="checkbox-label"><input type="checkbox" x-model="config.notifications.email.enabled" /> 启用邮件</label>
               <label>SMTP 服务器</label>
-              <input type="text" x-model="config.notifications.email.smtp_server" />
+              <input type="text" x-model="config.notifications.email.smtp_server" placeholder="smtp.example.com" />
+              <label>SMTP 端口 / SSL</label>
+              <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                <input type="number" x-model.number="config.notifications.email.smtp_port" style="max-width:6rem;" />
+                <label class="checkbox-label" style="margin:0;"><input type="checkbox" x-model="config.notifications.email.use_ssl" /> 使用 SSL</label>
+              </div>
               <label>发件人</label>
               <input type="text" x-model="config.notifications.email.sender" />
+              <label>主题前缀（可选）</label>
+              <input type="text" x-model="config.notifications.email.subject_prefix" placeholder="[招标助手]" style="max-width:12rem;" />
               <label>邮箱密码（留空不修改，写入 .env）</label>
               <div>
                 <input type="password" x-model="envInputs.EMAIL_PASSWORD" placeholder="已配置则显示为 ***" />
@@ -390,6 +431,11 @@
               </div>
               <label>收件人（每行一个）</label>
               <textarea x-model="emailRecipientsStr" rows="2" placeholder="user@example.com"></textarea>
+              <div class="divider"></div>
+              <h4 style="margin:0 0 0.5rem 0; font-size:0.9375rem;">通知规则</h4>
+              <label>每日报告发送时间</label>
+              <input type="text" x-model="config.notifications.notification_rules.daily_report_time" placeholder="18:00" style="max-width:6rem;" />
+              <label class="checkbox-label"><input type="checkbox" x-model="config.notifications.notification_rules.send_empty_report" /> 无匹配项目时也发送日报</label>
             </section>
           </div>
 
@@ -401,6 +447,8 @@
               <textarea x-model="schedulerTimesStr" rows="4" placeholder="09:00&#10;11:55&#10;13:00&#10;17:55"></textarea>
               <label>时区</label>
               <input type="text" x-model="config.settings.scheduler.timezone" placeholder="Asia/Shanghai" />
+              <label>单次最大运行时间（分钟，可选）</label>
+              <input type="number" x-model.number="config.settings.scheduler.max_runtime_minutes" placeholder="30" min="1" style="max-width:6rem;" />
             </section>
             <section class="config-block">
               <h3>爬虫与评分</h3>
@@ -452,9 +500,14 @@
         envInputs: { CUSTOM_OPENAI_API_KEY: '', WECHAT_WORK_WEBHOOK: '', EMAIL_PASSWORD: '' },
         newDirectionId: '',
         newDirectionName: '',
-        noticeTypesIncludeStr: '',
-        noticeTypesExcludeStr: '',
+        presetInclude: ['招标公告', '采购公告', '竞争性谈判公告', '询价公告'],
+        presetExclude: ['废标公告', '流标公告', '中标公告', '成交公告', '结果公示'],
+        noticeTypesIncludePreset: [],
+        noticeTypesExcludePreset: [],
+        noticeTypesIncludeCustom: '',
+        noticeTypesExcludeCustom: '',
         emailRecipientsStr: '',
+        wechatMentionStr: '',
         schedulerTimesStr: '',
         historyCrawls: [],
         historyStats: [],
@@ -513,27 +566,36 @@
             if (!s.scoring) s.scoring = {};
             if (!s.spider) s.spider = {};
             if (!s.analyzer) s.analyzer = {};
-            if (s.analyzer.provider === 'openai' || s.analyzer.provider === 'gemini') s.analyzer.provider = 'custom_openai';
             if (!s.scheduler) s.scheduler = { enabled: true, times: [], timezone: 'Asia/Shanghai' };
             if (s.scheduler.enabled === undefined) s.scheduler.enabled = true;
             if (!Array.isArray(s.scheduler.times)) s.scheduler.times = [];
             if (!s.announcement_filter) s.announcement_filter = {};
             if (!s.announcement_filter.notice_types) s.announcement_filter.notice_types = { enabled: true, include: [], exclude: [], include_correction: true };
+            if (s.analyzer && !['openai','gemini','custom_openai','none'].includes(s.analyzer.provider)) s.analyzer.provider = 'custom_openai';
             this.config.settings = s;
             const n = this.config.notifications || {};
             if (!n.wechat_work) n.wechat_work = {};
+            if (n.wechat_work.retry_times == null) n.wechat_work.retry_times = 3;
+            if (n.wechat_work.timeout == null) n.wechat_work.timeout = 10;
             if (!n.email) n.email = {};
             n.email.recipients = n.email.recipients || [];
+            if (!n.notification_rules) n.notification_rules = {};
             this.config.notifications = n;
             this.config.business_directions = this.config.business_directions || {};
             Object.keys(this.config.business_directions).forEach(k => {
               const d = this.config.business_directions[k];
               d.keywords_include_str = (d.keywords_include || []).join(', ');
               d.keywords_exclude_str = (d.keywords_exclude || []).join(', ');
+              d.location_priority = d.location_priority || { province: '', city: '' };
             });
-            this.noticeTypesIncludeStr = (s.announcement_filter.notice_types.include || []).join(', ');
-            this.noticeTypesExcludeStr = (s.announcement_filter.notice_types.exclude || []).join(', ');
+            const inc = s.announcement_filter.notice_types.include || [];
+            const exc = s.announcement_filter.notice_types.exclude || [];
+            this.noticeTypesIncludePreset = inc.filter(x => this.presetInclude.includes(x));
+            this.noticeTypesExcludePreset = exc.filter(x => this.presetExclude.includes(x));
+            this.noticeTypesIncludeCustom = inc.filter(x => !this.presetInclude.includes(x)).join(', ');
+            this.noticeTypesExcludeCustom = exc.filter(x => !this.presetExclude.includes(x)).join(', ');
             this.emailRecipientsStr = (n.email.recipients || []).join('\n');
+            this.wechatMentionStr = (n.wechat_work.mention_users || []).join(', ');
             this.schedulerTimesStr = (s.scheduler.times || []).join('\n');
             this.config.env_configured = this.config.env_configured || {};
           } catch (e) { this.config = {}; }
@@ -560,6 +622,15 @@
           if (confirm('确定删除该业务方向？')) delete this.config.business_directions[key];
         },
 
+        togglePresetInclude(p, checked) {
+          if (checked && !this.noticeTypesIncludePreset.includes(p)) this.noticeTypesIncludePreset = [...this.noticeTypesIncludePreset, p];
+          if (!checked) this.noticeTypesIncludePreset = this.noticeTypesIncludePreset.filter(x => x !== p);
+        },
+        togglePresetExclude(p, checked) {
+          if (checked && !this.noticeTypesExcludePreset.includes(p)) this.noticeTypesExcludePreset = [...this.noticeTypesExcludePreset, p];
+          if (!checked) this.noticeTypesExcludePreset = this.noticeTypesExcludePreset.filter(x => x !== p);
+        },
+
         detectedProviderName(url) {
           if (!url || typeof url !== 'string') return '';
           const u = url.toLowerCase();
@@ -578,11 +649,12 @@
           const payload = { settings: {}, business_directions: {}, notifications: {} };
           const s = this.config.settings;
           payload.settings = JSON.parse(JSON.stringify(s));
-          payload.settings.announcement_filter.notice_types.include = this.noticeTypesIncludeStr.split(',').map(x => x.trim()).filter(Boolean);
-          payload.settings.announcement_filter.notice_types.exclude = this.noticeTypesExcludeStr.split(',').map(x => x.trim()).filter(Boolean);
+          payload.settings.announcement_filter.notice_types.include = [...(this.noticeTypesIncludePreset || []), ...(this.noticeTypesIncludeCustom || '').split(',').map(x => x.trim()).filter(Boolean)];
+          payload.settings.announcement_filter.notice_types.exclude = [...(this.noticeTypesExcludePreset || []), ...(this.noticeTypesExcludeCustom || '').split(',').map(x => x.trim()).filter(Boolean)];
           payload.settings.scheduler.times = this.schedulerTimesStr.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
           payload.notifications = JSON.parse(JSON.stringify(this.config.notifications));
           payload.notifications.email.recipients = this.emailRecipientsStr.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+          payload.notifications.wechat_work.mention_users = (this.wechatMentionStr || '').split(',').map(x => x.trim()).filter(Boolean);
           const dirs = {};
           Object.keys(this.config.business_directions).forEach(k => {
             const d = this.config.business_directions[k];

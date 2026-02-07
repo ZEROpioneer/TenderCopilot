@@ -101,6 +101,19 @@ def get_config():
         settings["analyzer"] = mask(dict(settings["analyzer"]), ["custom_api_key", "api_key"])
 
     env_configured = _read_env_configured()
+    # 根据 .env 是否配置，统一返回“已配置/未配置”（不返回明文与 ${VAR）
+    if "analyzer" in (settings or {}):
+        settings["analyzer"] = dict(settings["analyzer"])
+        if env_configured.get("CUSTOM_OPENAI_API_KEY"):
+            settings["analyzer"]["custom_api_key"] = "已配置"
+        else:
+            settings["analyzer"]["custom_api_key"] = "未配置"
+    if "wechat_work" in (notifications or {}):
+        notifications["wechat_work"] = dict(notifications["wechat_work"])
+        notifications["wechat_work"]["webhook_url"] = "已配置" if env_configured.get("WECHAT_WORK_WEBHOOK") else "未配置"
+    if "email" in (notifications or {}):
+        notifications["email"] = dict(notifications["email"])
+        notifications["email"]["sender_password"] = "已配置" if env_configured.get("EMAIL_PASSWORD") else "未配置"
     return {
         "settings": settings or {},
         "business_directions": business.get("business_directions", business) if isinstance(business, dict) else {},
@@ -109,22 +122,25 @@ def get_config():
     }
 
 
-def _strip_masked(d: Dict, placeholder: str = "***已配置***") -> Dict:
-    """Remove keys whose value is placeholder so we don't write them to YAML."""
+MASKED_VALUES = ("***已配置***", "已配置", "未配置")
+
+
+def _strip_masked(d: Dict, placeholders: Tuple[str, ...] = MASKED_VALUES) -> Dict:
+    """Remove keys whose value is a placeholder so we don't write them to YAML."""
     out = {}
     for k, v in d.items():
-        if v == placeholder:
+        if v in placeholders:
             continue
         if isinstance(v, dict):
-            out[k] = _strip_masked(v, placeholder)
+            out[k] = _strip_masked(v, placeholders)
         else:
             out[k] = v
     return out
 
 
-def _deep_merge(base: Dict, update: Dict) -> Dict:
-    """Shallow merge: top-level keys in update overwrite base."""
-    update = _strip_masked(update)
+def _deep_merge(base: Dict, update: Dict, placeholders: Tuple[str, ...] = MASKED_VALUES) -> Dict:
+    """Deep merge: update overwrites base; placeholder values are stripped and not written."""
+    update = _strip_masked(update, placeholders)
     out = dict(base)
     for k, v in update.items():
         if k in out and isinstance(out[k], dict) and isinstance(v, dict):
@@ -152,11 +168,11 @@ def put_config(payload: Dict[str, Any]):
     if "notifications" in payload:
         path = CONFIG_DIR / "notifications.yaml"
         existing = _load_yaml(path)
-        for k, v in payload["notifications"].items():
-            if k == "wechat_work" and isinstance(v, dict) and v.get("webhook_url") == "***已配置***":
-                continue
-            if k == "email" and isinstance(v, dict) and v.get("sender_password") == "***已配置***":
-                continue
-            existing[k] = v
+        notif_update = _strip_masked(payload["notifications"])
+        for k, v in notif_update.items():
+            if isinstance(v, dict) and k in existing and isinstance(existing[k], dict):
+                existing[k] = _deep_merge(existing[k], v)
+            else:
+                existing[k] = v
         _save_yaml(path, existing)
     return {"status": "ok"}
