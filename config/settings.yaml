@@ -49,6 +49,7 @@ crawl_strategy:
 
 # 定时调度配置
 scheduler:
+  enabled: true   # 是否启用定时任务（false 时时间配置保留但不执行）
   times:
     - "09:00"
     - "11:55"
@@ -99,7 +100,7 @@ analyzer:
   #   - custom_base_url  为上面的 base_url
   #   - custom_api_key   为你的智谱 API Key（通过环境变量传入）
   #   - custom_model     为你选用的 GLM 模型名（如 glm-4-flash）
-  custom_base_url: "https://open.bigmodel.cn/api/coding/paas/v4"   # 智谱 OpenAI 兼容 base_url（末尾不必加 / ）
+  custom_base_url: "https://open.bigmodel.cn/api/paas/v4"   # 智谱 OpenAI 兼容 base_url（末尾不必加 / ）
   custom_api_key: "${CUSTOM_OPENAI_API_KEY}"                # 智谱 API Key（在 .env 中配置）
   custom_model: "glm-4-flash"                                   # 智谱模型名称（可按实际修改）
 
@@ -117,18 +118,22 @@ deep_analysis:
 
 # 评分配置（新增）
 scoring:
-  min_total_score: 60        # 最低推送分数
+  min_total_score: 65        # 最低推送分数（方向分+基础分达到推荐档）
   min_relevance_score: 40    # 最低相关度
   min_deadline_days: 3       # 最少投标准备天数
   
-  # 分数权重（仅供参考，已在代码中定义）
+  # 分数权重（仅供参考，实际权重在 FeasibilityScorer 中实现）
+  # 新评分结构：
+  # - 方向匹配：0–60分（主导因素）
+  # - 基础相关度：0–20分
+  # - 时间维度：0–20分（只区分已截止/未截止与大致充足程度）
+  # - 地域加分：0–5分（额外加分，用于排序）
+  # - AI 完整度 / 附件质量：不直接计入 100 分，只在报告中作为标签展示
   weights:
-    keyword_match: 20        # 关键词匹配
-    content_relevance: 25    # 内容相关度
-    ai_completeness: 20      # AI提取完整性
-    attachment_quality: 15   # 附件质量
-    deadline_adequacy: 10    # 时间充足度
-    location_bonus: 10       # 地域加分（额外）
+    keyword_match: 60        # 业务方向匹配（0–60）
+    content_relevance: 20    # 基础相关度（0–20）
+    time: 20                 # 时间维度（发布新鲜度+截止充足度，0–20）
+    location_bonus: 5        # 地域加分（额外，0–5）
   
   # 公告类型过滤配置（结合列表页公告类型）
 announcement_filter:
@@ -142,9 +147,10 @@ announcement_filter:
       - "询价公告"      # 包含简易询价公告等
     # 是否关注更正公告（更正原招标信息）
     include_correction: true
-    # 明确排除的公告类型：结果类/废标类
+    # 明确排除的公告类型：结果类/废标类/流标类
     exclude:
       - "废标公告"
+      - "流标公告"
       - "中标公告"
       - "成交公告"
   

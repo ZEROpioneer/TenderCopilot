@@ -12,20 +12,20 @@ class MarkdownReporter:
         """生成日报（分层展示）"""
         logger.info("📝 正在生成 Markdown 日报...")
         
-        # 按评分排序
+        # 按综合评分排序
         projects = sorted(
             filtered_projects,
-            key=lambda x: x['feasibility']['total'],
-            reverse=True
+            key=lambda x: x["feasibility"]["total"],
+            reverse=True,
         )
         
-        # 分组（新的分层逻辑）
-        recommended = [p for p in projects if p['feasibility']['total'] >= 60]  # 推荐项目（≥60分）
-        alternatives = [p for p in projects if p['feasibility']['total'] < 60]   # 备选项目（<60分）
+        # 分组（根据新的评分心智：方向优先）
+        recommended = [p for p in projects if p["feasibility"]["total"] >= 65]  # 推荐项目（≥65分）
+        alternatives = [p for p in projects if p["feasibility"]["total"] < 65]  # 备选项目（<65分）
         
         # 进一步细分推荐项目
-        excellent = [p for p in recommended if p['feasibility']['total'] >= 80]  # 优秀（≥80分）
-        good = [p for p in recommended if 60 <= p['feasibility']['total'] < 80]  # 良好（60-79分）
+        excellent = [p for p in recommended if p["feasibility"]["total"] >= 80]  # 优秀（≥80分）
+        good = [p for p in recommended if 65 <= p["feasibility"]["total"] < 80]  # 良好（65-79分）
         
         # 生成报告
         report = []
@@ -40,10 +40,10 @@ class MarkdownReporter:
         report.append(f"> {' | '.join(summary_parts) if summary_parts else '暂无符合项目'}\n")
         report.append("---\n")
         
-        # 第一部分：推荐项目（≥60分）
+        # 第一部分：推荐项目（≥65分）
         if recommended:
-            report.append("## 🎯 推荐项目（评分 ≥ 60分）\n")
-            report.append("> 大概率可行，优先关注\n\n")
+            report.append("## 🎯 推荐项目（评分 ≥ 65分）\n")
+            report.append("> 方向高度匹配，优先关注\n\n")
             
             # 优秀项目（≥80分）
             if excellent:
@@ -51,15 +51,15 @@ class MarkdownReporter:
                 for i, project in enumerate(excellent, 1):
                     report.append(self._format_project(i, project, detailed=True))
             
-            # 良好项目（60-79分）
+            # 良好项目（65-79分）
             if good:
-                report.append("### ✅ 良好项目（60-79分）\n")
+                report.append("### ✅ 良好项目（65-79分）\n")
                 for i, project in enumerate(good, 1):
                     report.append(self._format_project(i, project, detailed=True))
         
-        # 第二部分：备选项目（<60分）
+        # 第二部分：备选项目（<65分）
         if alternatives:
-            report.append("## 📌 备选项目（评分 < 60分）\n")
+            report.append("## 📌 备选项目（评分 < 65分）\n")
             report.append("> 可作备选，建议人工复核\n\n")
             for i, project in enumerate(alternatives, 1):
                 report.append(self._format_alternative_project(i, project))
@@ -83,12 +83,45 @@ class MarkdownReporter:
         ann = project['announcement']
         feas = project['feasibility']
         direction_name = self._get_direction_name(project)
+        breakdown = feas.get("breakdown", {})
         
         lines = []
         lines.append(f"### {index}. {ann['title']}\n")
         lines.append(f"**项目编号**: {ann.get('id', 'N/A')}  ")
         lines.append(f"**业务方向**: {direction_name}  ")
         lines.append(f"**可行性评分**: {feas['total']} / 100 {self._get_stars(feas['total'])}\n")
+        
+        # 关键信息标签：方向匹配 / AI / 附件 / 时间
+        tags = []
+        direction_score = breakdown.get("direction_match", 0)
+        if direction_score >= 45:
+            tags.append("方向匹配度：高")
+        elif direction_score >= 30:
+            tags.append("方向匹配度：中")
+        else:
+            tags.append("方向匹配度：低")
+
+        ai_ratio = breakdown.get("ai_completeness_ratio", 0)
+        if ai_ratio >= 0.8:
+            tags.append("AI 信息：完整")
+        elif ai_ratio >= 0.4:
+            tags.append("AI 信息：一般")
+        else:
+            tags.append("AI 信息：缺失/较少")
+
+        att_rel = breakdown.get("attachment_relevance", 0)
+        if att_rel > 0:
+            if att_rel >= 70:
+                tags.append("附件质量：高")
+            elif att_rel >= 40:
+                tags.append("附件质量：中")
+            else:
+                tags.append("附件质量：低")
+        else:
+            tags.append("附件：无或未分析")
+
+        if tags:
+            lines.append(f"**标签**: {' | '.join(tags)}  ")
         
         # 时间信息突出显示
         time_info = []
@@ -125,6 +158,7 @@ class MarkdownReporter:
         ann = project['announcement']
         feas = project['feasibility']
         direction_name = self._get_direction_name(project)
+        breakdown = feas.get("breakdown", {})
         
         lines = []
         lines.append(f"### {index}. {ann['title']}\n")
@@ -136,6 +170,27 @@ class MarkdownReporter:
         if ann.get('location'):
             basic_info.append(f"**地域**: {ann['location']}")
         lines.append(f"{' | '.join(basic_info)}  ")
+        
+        # 关键信息标签（简化版）
+        tags = []
+        direction_score = breakdown.get("direction_match", 0)
+        if direction_score >= 45:
+            tags.append("方向：高匹配")
+        elif direction_score >= 30:
+            tags.append("方向：中等")
+        else:
+            tags.append("方向：一般")
+
+        ai_ratio = breakdown.get("ai_completeness_ratio", 0)
+        if ai_ratio >= 0.8:
+            tags.append("AI：完整")
+        elif ai_ratio >= 0.4:
+            tags.append("AI：一般")
+        else:
+            tags.append("AI：缺失")
+
+        if tags:
+            lines.append(f"**标签**: {' | '.join(tags)}  ")
         
         # 时间信息（关键）
         time_info = []
@@ -195,13 +250,13 @@ class MarkdownReporter:
         lines.append("## 📊 今日统计\n")
         lines.append(f"- **爬取公告总数**: {stats.get('total_crawled', 0)}")
         lines.append(f"- **初筛匹配数**: {stats.get('total_matched', 0)}")
-        lines.append(f"- **推荐项目**: {stats.get('recommended', 0)} 个（≥60分）")
+        lines.append(f"- **推荐项目**: {stats.get('recommended', 0)} 个（≥65分）")
         if stats.get('excellent', 0) > 0:
             lines.append(f"  - 优秀项目: {stats.get('excellent', 0)} 个（≥80分）")
         if stats.get('good', 0) > 0:
-            lines.append(f"  - 良好项目: {stats.get('good', 0)} 个（60-79分）")
+            lines.append(f"  - 良好项目: {stats.get('good', 0)} 个（65-79分）")
         if stats.get('alternatives', 0) > 0:
-            lines.append(f"- **备选项目**: {stats.get('alternatives', 0)} 个（<60分，可人工复核）")
+            lines.append(f"- **备选项目**: {stats.get('alternatives', 0)} 个（<65分，可人工复核）")
         lines.append("")
         return "\n".join(lines)
     

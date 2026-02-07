@@ -222,20 +222,20 @@ class TenderCopilot:
             
             # 步骤6: 分析结果分层（推荐+备选）
             logger.info("🎯 步骤 6/7: 结果分层（推荐项目 + 备选项目）")
-            recommended = [p for p in filtered if p['feasibility']['total'] >= 60]  # 推荐项目
-            alternatives = [p for p in filtered if p['feasibility']['total'] < 60]  # 备选项目
+            recommended = [p for p in filtered if p['feasibility']['total'] >= 65]  # 推荐项目（与报告阈值一致）
+            alternatives = [p for p in filtered if p['feasibility']['total'] < 65]   # 备选项目
             
-            logger.info(f"  ✅ 推荐项目: {len(recommended)} 个（评分≥60分）")
+            logger.info(f"  ✅ 推荐项目: {len(recommended)} 个（评分≥65分）")
             if len(recommended) > 0:
                 excellent = sum(1 for p in recommended if p['feasibility']['total'] >= 80)
                 good = len(recommended) - excellent
                 if excellent > 0:
                     logger.info(f"     - 优秀: {excellent} 个（≥80分）")
                 if good > 0:
-                    logger.info(f"     - 良好: {good} 个（60-79分）")
+                    logger.info(f"     - 良好: {good} 个（65-79分）")
             
             if alternatives:
-                logger.info(f"  📌 备选项目: {len(alternatives)} 个（评分<60分，可人工复核）")
+                logger.info(f"  📌 备选项目: {len(alternatives)} 个（评分<65分，可人工复核）")
             
             # 步骤7: 生成报告并推送（包含所有项目）
             logger.info("📝 步骤 7/7: 生成报告并推送通知")
@@ -244,7 +244,7 @@ class TenderCopilot:
                 'total_matched': len(filtered),
                 'recommended': len(recommended),
                 'excellent': sum(1 for p in recommended if p['feasibility']['total'] >= 80),
-                'good': sum(1 for p in recommended if 60 <= p['feasibility']['total'] < 80),
+                'good': sum(1 for p in recommended if 65 <= p['feasibility']['total'] < 80),
                 'alternatives': len(alternatives)
             }
             
@@ -564,14 +564,15 @@ class TenderCopilot:
             logger.info(f"✅ 并发分析完成：{completed}/{len(projects)} 个项目")
     
     def start_scheduler(self):
-        """启动定时任务"""
+        """启动定时任务（当 scheduler.enabled 为 true 时）"""
+        if not self.config.get("scheduler", {}).get("enabled", True):
+            logger.warning("⏰ 定时任务已关闭（scheduler.enabled=false），仅单次运行可用")
+            return
         logger.info("⏰ 启动定时任务模式")
-        
         scheduler = TaskScheduler(
-            self.config['scheduler'],
+            self.config["scheduler"],
             self.run_pipeline
         )
-        
         scheduler.add_daily_tasks()
         scheduler.start()
 

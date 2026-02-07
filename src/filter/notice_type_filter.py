@@ -49,8 +49,8 @@ class NoticeTypeFilter:
         exclude = set(self.types_cfg.get("exclude", []))
         include_correction = self.types_cfg.get("include_correction", False)
 
-        # 先根据关键字排除典型的结果类/废标类公告
-        danger_keywords = ["废标", "中标", "成交", "结果公示", "结果公告"]
+        # 先根据关键字排除典型的结果类/废标类/流标类公告
+        danger_keywords = ["废标", "流标", "中标", "成交", "结果公示", "结果公告"]
         text_for_judge = f"{normalized_type} {title}"
         if any(k in text_for_judge for k in danger_keywords):
             return {

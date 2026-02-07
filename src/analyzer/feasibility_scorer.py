@@ -54,60 +54,66 @@ class FeasibilityScorer:
         Returns:
             评分结果字典
         """
-        scores = {
-            'keyword_match': 0,      # 关键词匹配度 (0-20)
-            'content_relevance': 0,  # 内容相关度 (0-25)
-            'ai_completeness': 0,    # AI提取完整性 (0-20)
-            'attachment_quality': 0, # 附件质量 (0-15)
-            'time_comprehensive': 0, # 时间综合评分 (0-15)
-            'location_bonus': 0      # 地域加分 (0-10，额外)
-        }
-        
-        # 1. 关键词匹配分（最高 20 分）
+        # 1. 业务方向匹配分（0-60）
+        # 使用 KeywordMatcher 的 score（0-1）线性映射到 0-60
         best_match = max(match_results.values(), key=lambda x: x['score'])
-        scores['keyword_match'] = best_match['score'] * 20
-        
-        # 2. 内容相关度分（最高 25 分）
+        direction_score_raw = best_match['score']  # 0-1
+        direction_score = direction_score_raw * 60
+
+        # 针对特定方向（如院线电影等）后续可以在这里加一点点系数
+        # 暂时保持统一，避免过度偏置
+
+        # 2. 基础内容相关度（0-20）
         if content_analysis:
-            # 内容分析的score是0-100，需要转换到0-25
-            scores['content_relevance'] = (content_analysis.get('score', 0) / 100) * 25
+            # content_analysis['score'] 是 0-100，线性映射到 0-20
+            content_score = (content_analysis.get("score", 0) / 100) * 20
         else:
-            # 如果没有内容分析，给基础分
-            scores['content_relevance'] = 10
-        
-        # 3. AI提取完整性分（最高 20 分）
-        if ai_extracted:
-            completeness = self._calculate_ai_completeness(ai_extracted)
-            scores['ai_completeness'] = completeness * 20
-        else:
-            scores['ai_completeness'] = 5  # 默认低分
-        
-        # 4. 附件质量分（最高 15 分）
-        if attachment_analysis:
-            # 附件分析的relevance_score是0-100
-            scores['attachment_quality'] = (attachment_analysis.get('relevance_score', 0) / 100) * 15
-        else:
-            scores['attachment_quality'] = 0
-        
-        # 5. 时间综合评分（最高 15 分）- 优化版
+            # 没有内容分析时给一个中等保守分，避免被打成很低分
+            content_score = 10
+
+        # 3. 时间评分（0-20），只要未过期就给中高分，主要用于排序
         time_score_result = self._calculate_time_score(announcement, ai_extracted)
-        scores['time_comprehensive'] = time_score_result['total']
-        
-        # 6. 地域加分（根据类别）
-        scores['location_bonus'] = location_result.get('bonus_score', 0)
-        
-        # 计算总分（地域加分单独计算）
-        base_total = sum(v for k, v in scores.items() if k != 'location_bonus')
-        final_total = base_total + scores['location_bonus']
-        final_total = min(final_total, 100)  # 最高100分
-        
+        time_total = time_score_result["total"]  # 仍然是 0-15
+        # 轻微放大到 0-20 区间，避免比重过小
+        time_score = min(time_total / 15 * 20, 20) if time_total > 0 else 0
+
+        # 4. 地域加分（0-5，额外）
+        location_bonus = location_result.get("bonus_score", 0)
+        # 控制在 0-5 之间，防止影响过大
+        location_bonus = max(0, min(location_bonus, 5))
+
+        # 5. AI / 附件仅用于标签，不直接计入总分
+        ai_completeness = self._calculate_ai_completeness(ai_extracted) if ai_extracted else 0
+        attachment_quality_score = 0
+        if attachment_analysis:
+            attachment_quality_score = attachment_analysis.get("relevance_score", 0)
+
+        # 6. 计算总分（方向 + 内容 + 时间 为主干）
+        base_total = direction_score + content_score + time_score
+        final_total = min(base_total + location_bonus, 100)
+
+        # 构造细分结果
+        scores = {
+            "direction_match": direction_score,
+            "content_relevance": content_score,
+            "time": time_score,
+            "location_bonus": location_bonus,
+            # 以下仅作为参考标签，不参与 base_total
+            "ai_completeness_ratio": ai_completeness,          # 0-1
+            "attachment_relevance": attachment_quality_score,  # 0-100 原始分
+        }
+
         return {
-            'total': round(final_total, 1),
-            'base_score': round(base_total, 1),
-            'breakdown': {k: round(v, 1) for k, v in scores.items()},
-            'level': self._get_level(final_total),
-            'passes_filter': self._check_second_filter(final_total, ai_extracted, time_score_result['deadline_adequacy']),
-            'time_score_details': time_score_result.get('details', {})  # 保存时间评分详情
+            "total": round(final_total, 1),
+            "base_score": round(base_total, 1),
+            "breakdown": {k: round(v, 1) for k, v in scores.items()},
+            "level": self._get_level(final_total),
+            "passes_filter": self._check_second_filter(
+                final_total,
+                direction_score,
+                time_score_result.get("deadline_adequacy", 0),
+            ),
+            "time_score_details": time_score_result.get("details", {}),
         }
     
     def _calculate_ai_completeness(self, ai_extracted: Dict) -> float:
@@ -150,17 +156,8 @@ class FeasibilityScorer:
         - 发布新鲜度 (0-5分): 越新越好
         - 截止充足度 (0-10分): 距离截止时间是否充足
         
-        Args:
-            announcement: 公告信息
-            ai_extracted: AI提取结果（可选）
-            
-        Returns:
-            {
-                'publish_freshness': 0-5,  # 发布新鲜度
-                'deadline_adequacy': 0-10,  # 截止充足度
-                'total': 0-15,
-                'details': {...}
-            }
+        注意：在新的整体策略中，时间只用于区分“是否已过期”和排序，
+        不再作为强力淘汰条件，但如果明确已截止，则整体会被视为丢弃档。
         """
         from datetime import datetime, timedelta
         
@@ -205,13 +202,15 @@ class FeasibilityScorer:
                 days_left = self._calculate_days_left(deadline_str)
                 
                 if days_left < 0:
+                    # 已截止：在上层会被视为丢弃，这里标记为 0 分
                     score['deadline_adequacy'] = 0
                     score['details']['deadline'] = '已截止'
                 elif days_left <= 3:
-                    score['deadline_adequacy'] = 3
+                    # 时间较紧，但仍可作为候选
+                    score['deadline_adequacy'] = 4
                     score['details']['deadline'] = f'仅剩{days_left}天'
                 elif days_left <= 7:
-                    score['deadline_adequacy'] = 6
+                    score['deadline_adequacy'] = 7
                     score['details']['deadline'] = f'剩余{days_left}天'
                 elif days_left <= 15:
                     score['deadline_adequacy'] = 9
@@ -220,11 +219,11 @@ class FeasibilityScorer:
                     score['deadline_adequacy'] = 10
                     score['details']['deadline'] = f'剩余{days_left}天，充足'
             except:
-                score['deadline_adequacy'] = 5  # 解析失败给中等分
+                score['deadline_adequacy'] = 6  # 解析失败给略高于中等分
                 score['details']['deadline'] = '截止时间解析失败'
         else:
-            # 没有截止时间，给中等分
-            score['deadline_adequacy'] = 5
+            # 没有截止时间，给中等偏上的分，并在文案中提示
+            score['deadline_adequacy'] = 7
             score['details']['deadline'] = '未提供截止时间'
         
         score['total'] = score['publish_freshness'] + score['deadline_adequacy']
@@ -356,13 +355,19 @@ class FeasibilityScorer:
             True: 通过二次过滤
             False: 不通过
         """
-        # 检查总分
-        min_score = self.config.get('scoring', {}).get('min_total_score', 60)
+        # 1. 首先检查总分是否达到基础推荐门槛
+        min_score = self.config.get("scoring", {}).get("min_total_score", 60)
         if total_score < min_score:
             return False
-        
-        # 检查时间（deadline_score >= 6 表示至少3天）
-        if deadline_score < 6:
+
+        # 2. 要求方向匹配足够强（方向分至少 40/60）
+        # 这里通过传入的 direction_score_z (实际值) 来判断
+        # 注意：direction_score_z 在调用处转换为 0-60 区间
+        # 为兼容旧签名，这里只检查总分，方向强弱主要体现在总分上
+
+        # 3. 截止时间：只要不是“明显时间不足”即可
+        # deadline_score >= 6 代表至少还有约 3 天，这里略微放宽
+        if deadline_score < 3:
             return False
         
         # TODO: 可以添加资格要求检查（需要AI模型支持）
