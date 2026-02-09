@@ -1,72 +1,64 @@
-# 业务方向配置
 business_directions:
   cultural_atmosphere:
-    name: "文化氛围类"
+    name: 文化氛围类
     keywords_include:
-      - "文化"
-      - "氛围"
-      - "墙"
-      - "宣传"
+    - 文化
+    - 氛围
+    - 墙
+    - 宣传
     keywords_exclude: []
-    location_required: true  # 只有此方向有地域限制
+    location_required: true
+    weight: 1
+    description: 军队文化建设、氛围营造、文化墙制作等项目
     location_priority:
-      province: "辽宁省"
-      city: "大连市"
-    weight: 1.0
-    description: "军队文化建设、氛围营造、文化墙制作等项目"
-    
+      province: 辽宁省
+      city: 大连市
   digital_hall:
-    name: "数字史馆类"
+    name: 数字史馆类
     keywords_include:
-      - "数字史馆"
-      - "数字展馆"
-      - "史馆"
-      - "展馆"
+    - 数字史馆
+    - 数字展馆
+    - 史馆
+    - 展馆
     keywords_exclude: []
-    location_required: false  # 无地域限制
-    location_bonus: true  # 启用地域加分（低权重）
-    weight: 1.0
-    description: "数字化历史展馆、虚拟展馆建设项目"
-    
+    location_required: false
+    weight: 1
+    description: 数字化历史展馆、虚拟展馆建设项目
+    location_bonus: true
   simulation_training:
-    name: "仿真训练系统类"
+    name: 仿真训练系统类
     keywords_include:
-      - "VR"
-      - "AR"
-      - "仿真"
-      - "虚拟"
-      - "模拟"
-      - "训练系统"
+    - VR
+    - AR
+    - 仿真
+    - 虚拟
+    - 模拟
+    - 训练系统
     keywords_exclude: []
-    location_required: false  # 无地域限制
-    location_bonus: true  # 启用地域加分（低权重）
-    weight: 1.0
-    description: "VR/AR仿真训练、虚拟现实、模拟训练系统项目"
-    
+    location_required: false
+    weight: 1
+    description: VR/AR仿真训练、虚拟现实、模拟训练系统项目
+    location_bonus: true
   cinema_service:
-    name: "院线电影服务类"
+    name: 院线电影服务类
     keywords_include:
-      - "电影"
-      - "院线"
-      - "影院"
-      - "放映"
+    - 电影
+    - 院线
+    - 影院
+    - 放映
     keywords_exclude: []
-    location_required: false  # 无地域限制
-    location_bonus: true  # 启用地域加分（低权重）
-    weight: 1.0
-    description: "军队院线电影放映、影院服务项目"
-
-# 全局排除规则
+    location_required: false
+    weight: 1
+    description: 军队院线电影放映、影院服务项目
+    location_bonus: true
 global_exclude:
   keywords:
-    - "保密资质"
-    - "涉密"
-    - "秘密级"
-    - "机密级"
-    - "绝密级"
-  qualifications: []  # 后续手动添加具体资质对比
-
-# 筛选阈值配置
+  - 保密资质
+  - 涉密
+  - 秘密级
+  - 机密级
+  - 绝密级
+  qualifications: []
 thresholds:
-  min_keyword_match_score: 0.25  # 最低关键词匹配分数
-  min_feasibility_score: 40      # 最低可行性评分（不推送低于此分数的项目）
+  min_keyword_match_score: 0.25
+  min_feasibility_score: 40

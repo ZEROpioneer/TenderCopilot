@@ -61,6 +61,15 @@ class ConfigManager:
             self._config.update(notifications)
             
             # 4. 尝试加载可选配置（向后兼容）
+            # 确保 announcement_filter.smart_track 有默认值
+            af = self._config.get('announcement_filter', {})
+            if 'smart_track' not in af:
+                af['smart_track'] = {
+                    'enabled': True,
+                    'score_threshold': 60,
+                    'smart_track_types': ['更正公告', '流标公告', '废标公告', '变更公告'],
+                }
+            
             # filter_settings.yaml（将被废弃，如果存在则合并）
             try:
                 filter_settings = self._load_yaml('filter_settings.yaml')

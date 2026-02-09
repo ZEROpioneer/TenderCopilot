@@ -1,62 +1,40 @@
-# 通知渠道配置
-
-# 企业微信机器人
 wechat_work:
   enabled: true
-  webhook_url: "${WECHAT_WORK_WEBHOOK}"  # 从环境变量读取，保护敏感信息
-  mention_users: []  # @的用户列表，如 ["@all"] 或 ["zhangsan", "lisi"]
+  webhook_url: ${WECHAT_WORK_WEBHOOK}
+  mention_users: []
   retry_times: 3
   timeout: 10
-
-# 邮件通知
 email:
   enabled: false
-  smtp_server: "smtp.example.com"
+  smtp_server: smtp.example.com
   smtp_port: 465
   use_ssl: true
-  sender: "tender@company.com"
-  sender_password: "${EMAIL_PASSWORD}"  # 从环境变量读取
+  sender: tender@company.com
+  sender_password: ${EMAIL_PASSWORD}
   recipients:
-    - "user1@company.com"
-    - "user2@company.com"
+  - user1@company.com
+  - user2@company.com
   cc: []
-  subject_prefix: "[招标助手]"
-
-# 微信个人通知（通过 Server酱/pushplus 等服务）
+  subject_prefix: '[招标助手]'
 wechat:
   enabled: false
-  service: "serverchan"  # serverchan, pushplus
-  token: "${WECHAT_PERSONAL_TOKEN}"  # 从环境变量读取
-
-# 钉钉机器人（备用）
+  service: serverchan
+  token: ${WECHAT_PERSONAL_TOKEN}
 dingtalk:
   enabled: false
-  webhook_url: "${DINGTALK_WEBHOOK}"  # 从环境变量读取
-  secret: "${DINGTALK_SECRET}"  # 从环境变量读取
-
-# 通知规则
+  webhook_url: ${DINGTALK_WEBHOOK}
+  secret: ${DINGTALK_SECRET}
 notification_rules:
-  # 高优先级项目（评分>=80）立即通知
   high_priority_instant: true
-  
-  # 中优先级项目（60-80分）在日报中通知
   medium_priority_daily: true
-  
-  # 低优先级项目（<60分）不通知
   low_priority_skip: true
-  
-  # 每日报告发送时间（如果当天有匹配项目）
-  daily_report_time: "18:00"
-  
-  # 是否在无匹配项目时也发送日报
+  daily_report_time: '18:00'
   send_empty_report: false
-
-# 管理员告警通知（系统异常）
 admin_alerts:
   enabled: true
   channels:
-    - "wechat_work"  # 使用企业微信发送告警
+  - wechat_work
   alert_on:
-    - "crawler_failure"  # 爬虫失败
-    - "high_error_rate"  # 错误率过高
-    - "no_matches_48h"   # 48小时无匹配项目
+  - crawler_failure
+  - high_error_rate
+  - no_matches_48h

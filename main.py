@@ -18,6 +18,7 @@ from src.filter.keyword_matcher import KeywordMatcher
 from src.filter.location_matcher import LocationMatcher
 from src.filter.deduplicator import Deduplicator
 from src.filter.notice_type_filter import NoticeTypeFilter
+from src.filter.manager import FilterManager
 from src.analyzer.info_extractor import InfoExtractor
 from src.analyzer.feasibility_scorer import FeasibilityScorer
 from src.reporter.report_generator import MarkdownReporter
@@ -117,6 +118,14 @@ class TenderCopilot:
         self.location_matcher = LocationMatcher()
         self.notice_type_filter = NoticeTypeFilter(self.config)
         self.deduplicator = Deduplicator(self.db)
+        self.filter_manager = FilterManager(
+            self.config,
+            self.db,
+            self.keyword_matcher,
+            self.location_matcher,
+            self.notice_type_filter,
+            self.deduplicator,
+        )
         
         # 初始化 AI 信息提取器（内部根据 provider / 配置自行决定是否可用）
         self.analyzer = InfoExtractor(self.config)
@@ -354,58 +363,8 @@ class TenderCopilot:
         return keywords
     
     def filter_announcements(self, announcements):
-        """初步筛选公告（关键词+地域）"""
-        filtered = []
-        
-        for ann in announcements:
-            # 1. 关键词匹配
-            match_results = self.keyword_matcher.match(ann)
-            if not match_results:
-                continue
-            
-            # 2. 获取最佳匹配方向
-            best_direction_id = max(match_results.keys(), key=lambda k: match_results[k]['score'])
-            best_direction = match_results[best_direction_id]
-            direction_config = self.config['business_directions'][best_direction_id]
-            
-            # 3. 地域匹配检查
-            location_result = self.location_matcher.match(
-                ann, 
-                best_direction_id,
-                direction_config
-            )
-            
-            # 如果地域要求不通过，跳过（详细原因仅记录在调试日志中）
-            if not location_result['matched']:
-                logger.debug(f"⏭️ 跳过（地域不符-{direction_config['name']}）: {ann['title'][:50]}...")
-                continue
-
-            # 4. 公告类型过滤（招标公告 / 询价公告 / 更正公告等）
-            type_result = self.notice_type_filter.match(ann)
-            if not type_result["matched"]:
-                logger.debug(
-                    f"⏭️ 跳过（公告类型不符-{type_result['normalized_type']}，原因: {type_result['reason']}）: "
-                    f"{ann['title'][:50]}..."
-                )
-                continue
-            
-            # 5. 去重
-            if self.deduplicator.is_duplicate(ann):
-                logger.debug(f"⏭️ 跳过（重复）: {ann['title'][:50]}...")
-                continue
-            
-            # 6. 保存到数据库
-            self.db.save_announcement(ann)
-            
-            # 7. 添加到结果（暂时不计算评分，等深度分析后再计算）
-            filtered.append({
-                'announcement': ann,
-                'matched_direction_id': best_direction_id,
-                'match_results': match_results,
-                'location_result': location_result
-            })
-        
-        return filtered
+        """初步筛选公告（双轨制：策略 A 新机会 / 策略 B 智能追踪）"""
+        return self.filter_manager.process(announcements)
     
     def _analyze_single_project(self, project_info):
         """分析单个项目（可并发执行）
@@ -503,7 +462,37 @@ class TenderCopilot:
             self.db.save_filtered_project(ann['id'], project['match_results'], feasibility)
             if ai_extracted:
                 self.db.save_analysis_result(ann['id'], ai_extracted, 0.8)
-            
+
+            # 高分项目加入追踪名单（智能追踪：后续更正/流标等只提醒已关注项目）
+            threshold = (
+                self.config.get("announcement_filter", {})
+                .get("smart_track", {})
+                .get("score_threshold", 60)
+            )
+            if (
+                self.config.get("announcement_filter", {})
+                .get("smart_track", {})
+                .get("enabled", True)
+                and feasibility["total"] >= threshold
+            ):
+                project_code = (ai_extracted or {}).get("project_code") if ai_extracted else None
+                project_name = (ai_extracted or {}).get("project_name") if ai_extracted else None
+                if not project_code and not project_name:
+                    from src.utils.project_fingerprint import extract_project_refs_from_content
+                    content = ann.get("content") or ""
+                    refs = extract_project_refs_from_content(content)
+                    if refs:
+                        project_code, project_name = refs[0][0] or "", refs[0][1] or ""
+                if project_code or project_name:
+                    n = self.db.add_interested_project(
+                        project_code=project_code,
+                        project_name=project_name,
+                        source_announcement_id=ann["id"],
+                        feasibility_score=feasibility["total"],
+                    )
+                    if n > 0:
+                        logger.debug(f"     已加入追踪名单 (指纹数: {n})")
+
             # 显示评分
             score_info = f"{feasibility['total']}/100 ({feasibility['level']})"
             if feasibility.get('passes_filter'):

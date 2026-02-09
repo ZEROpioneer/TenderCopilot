@@ -17,8 +17,9 @@ class InfoExtractor:
 
 请以 JSON 格式返回以下信息：
 {{
+    "project_code": "项目编号（如有，用于后续更正/流标公告关联追踪）",
+    "project_name": "项目名称（如有）",
     "supplier_qualifications": "供应商资格要求的详细描述",
-    "max_budget": "项目最高限价（包含金额和单位）",
     "registration_requirements": {{
         "method": "报名方式",
         "materials": ["所需材料列表"],

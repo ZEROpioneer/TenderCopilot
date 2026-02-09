@@ -110,6 +110,20 @@ class DatabaseManager:
             )
         """)
         
+        # 创建高意向项目追踪表（智能追踪：更正/流标等只关注已关注项目）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS interested_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_fingerprint TEXT UNIQUE NOT NULL,
+                project_code TEXT,
+                project_name TEXT,
+                source_announcement_id TEXT,
+                feasibility_score REAL,
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (source_announcement_id) REFERENCES announcements(id)
+            )
+        """)
+        
         # 创建索引以提高查询性能（优化版）
         logger.debug("创建数据库索引...")
         
@@ -150,6 +164,11 @@ class DatabaseManager:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_analysis_announcement_id 
             ON analysis_results(announcement_id)
+        """)
+        
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_interested_fingerprint 
+            ON interested_projects(project_fingerprint)
         """)
         
         self.conn.commit()
@@ -225,6 +244,70 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"❌ 保存分析结果失败: {e}")
             return False
+    
+    def add_interested_project(
+        self,
+        project_code: str = None,
+        project_name: str = None,
+        source_announcement_id: str = None,
+        feasibility_score: float = None,
+    ) -> int:
+        """将高意向项目加入追踪名单（评分>=阈值时调用）。
+        会为 project_code 和 project_name 各生成指纹，确保更正公告用任一提及方式都能匹配。
+        Returns: 新增的指纹数量（0/1/2）
+        """
+        import hashlib
+        added = 0
+        seen_fp = set()
+        cursor = self.conn.cursor()
+        for raw in (project_code, project_name):
+            norm = self._normalize_for_fingerprint(raw) if raw else ""
+            if not norm or len(norm) < 2:
+                continue
+            fp = hashlib.sha256(norm.encode('utf-8')).hexdigest()
+            if fp in seen_fp:
+                continue
+            seen_fp.add(fp)
+            code_val = raw if (project_code and raw == project_code) else None
+            name_val = raw if (project_name and raw == project_name) else None
+            try:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO interested_projects 
+                    (project_fingerprint, project_code, project_name, source_announcement_id, feasibility_score)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (fp, code_val, name_val, source_announcement_id, feasibility_score))
+                if cursor.rowcount > 0:
+                    added += 1
+            except Exception as e:
+                logger.warning(f"添加追踪指纹时忽略重复: {e}")
+        self.conn.commit()
+        return added
+    
+    def is_interested_project(self, project_fingerprint: str) -> bool:
+        """检查项目指纹是否在追踪名单中"""
+        cursor = self.conn.cursor()
+        result = cursor.execute(
+            "SELECT 1 FROM interested_projects WHERE project_fingerprint = ?",
+            (project_fingerprint,),
+        ).fetchone()
+        return result is not None
+    
+    def get_interested_fingerprints_set(self):
+        """获取所有追踪中的项目指纹集合（用于批量检查）"""
+        cursor = self.conn.cursor()
+        rows = cursor.execute(
+            "SELECT project_fingerprint FROM interested_projects"
+        ).fetchall()
+        return {row[0] if hasattr(row, '__getitem__') else row['project_fingerprint'] for row in rows}
+    
+    @staticmethod
+    def _normalize_for_fingerprint(s: str) -> str:
+        """清洗字符串用于指纹计算"""
+        if not s or not isinstance(s, str):
+            return ""
+        import re
+        s = re.sub(r'\s+', '', s.strip())
+        return s
     
     def exists(self, announcement_id):
         """检查公告是否存在"""
