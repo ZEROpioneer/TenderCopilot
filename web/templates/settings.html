@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}配置管理 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+{% endblock %}
+{% block content %}
+  <div x-data="settingsApp()" x-init="init()" class="space-y-6">
+    <h1 class="text-xl font-semibold text-gray-100">配置管理</h1>
+
+    <!-- Flash 消息 -->
+    <div x-show="flash" x-transition class="rounded-lg p-4 bg-green-900/50 border border-green-700 text-green-200"
+         x-cloak>保存成功</div>
+
+    <p x-show="configError && configError !== '已保存'" x-text="configError" class="text-red-400 text-sm"></p>
+
+    <template x-if="config.settings">
+      <div class="flex flex-wrap gap-2 mb-4">
+        <button type="button" @click="configSubTab='directions'" class="px-3 py-2 rounded-md text-sm font-medium transition"
+                :class="configSubTab==='directions' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">业务方向</button>
+        <button type="button" @click="configSubTab='notice'" class="px-3 py-2 rounded-md text-sm font-medium transition"
+                :class="configSubTab==='notice' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">公告类型</button>
+        <button type="button" @click="configSubTab='ai'" class="px-3 py-2 rounded-md text-sm font-medium transition"
+                :class="configSubTab==='ai' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">AI 模型</button>
+        <button type="button" @click="configSubTab='notify'" class="px-3 py-2 rounded-md text-sm font-medium transition"
+                :class="configSubTab==='notify' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">通知</button>
+        <button type="button" @click="configSubTab='schedule'" class="px-3 py-2 rounded-md text-sm font-medium transition"
+                :class="configSubTab==='schedule' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">定时与爬虫</button>
+      </div>
+    </template>
+
+    <form @submit.prevent="saveConfig()" x-show="config.settings" class="space-y-6">
+      <!-- 业务方向 -->
+      <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='directions'">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">关键词与业务方向</h2>
+        <template x-for="(dir, key) in config.business_directions" :key="key">
+          <div class="border border-gray-600 rounded-lg p-4 mb-4 bg-gray-700/50">
+            <div class="flex justify-between items-center mb-3">
+              <span class="font-medium text-gray-100" x-text="dir.name || key"></span>
+              <button type="button" @click="removeDirection(key)" class="text-sm text-red-400 hover:text-red-300">删除</button>
+            </div>
+            <div class="space-y-2">
+              <label class="block text-sm text-gray-400">包含关键词（逗号分隔）</label>
+              <input type="text" x-model="dir.keywords_include_str" placeholder="文化, 氛围, 墙"
+                     class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+              <label class="block text-sm text-gray-400">排除关键词（逗号分隔）</label>
+              <input type="text" x-model="dir.keywords_exclude_str" placeholder="可选"
+                     class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+              <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                <input type="checkbox" x-model="dir.location_required" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 地域限制
+              </label>
+              <template x-if="dir.location_required">
+                <div class="flex gap-2">
+                  <input type="text" x-model="dir.location_priority.province" placeholder="省"
+                         class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+                  <input type="text" x-model="dir.location_priority.city" placeholder="市"
+                         class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+        <div class="pt-4 border-t border-gray-700 space-y-2">
+          <input type="text" x-model="newDirectionId" placeholder="新增方向 ID（英文）"
+                 class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <input type="text" x-model="newDirectionName" placeholder="显示名称"
+                 class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <button type="button" @click="addDirection()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded">新增方向</button>
+        </div>
+      </div>
+
+      <!-- 公告类型 -->
+      <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='notice'">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">公告类型</h2>
+        <label class="flex items-center gap-2 text-gray-300 cursor-pointer mb-4">
+          <input type="checkbox" x-model="config.settings.announcement_filter.notice_types.enabled" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 启用公告类型过滤
+        </label>
+        <p class="text-sm text-gray-500 mb-2">要保留的公告类型</p>
+        <div class="flex flex-wrap gap-3 mb-4">
+          <template x-for="p in presetInclude" :key="p">
+            <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+              <input type="checkbox" :checked="noticeTypesIncludePreset.includes(p)" @change="togglePresetInclude(p, $event.target.checked)" class="rounded border-gray-600 bg-gray-700 text-blue-500" />
+              <span x-text="p"></span>
+            </label>
+          </template>
+        </div>
+        <input type="text" x-model="noticeTypesIncludeCustom" placeholder="其他保留类型，逗号分隔" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-4" />
+        <p class="text-sm text-gray-500 mb-2">要排除的公告类型</p>
+        <div class="flex flex-wrap gap-3 mb-4">
+          <template x-for="p in presetExclude" :key="p">
+            <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+              <input type="checkbox" :checked="noticeTypesExcludePreset.includes(p)" @change="togglePresetExclude(p, $event.target.checked)" class="rounded border-gray-600 bg-gray-700 text-blue-500" />
+              <span x-text="p"></span>
+            </label>
+          </template>
+        </div>
+        <input type="text" x-model="noticeTypesExcludeCustom" placeholder="其他排除类型，逗号分隔" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-4" />
+        <label class="flex items-center gap-2 text-gray-400 cursor-pointer">
+          <input type="checkbox" x-model="config.settings.announcement_filter.notice_types.include_correction" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 包含更正公告
+        </label>
+      </div>
+
+      <!-- AI 模型 -->
+      <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='ai'">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">AI 模型</h2>
+        <label class="block text-sm text-gray-400 mb-2">AI 提供商</label>
+        <select x-model="config.settings.analyzer.provider" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-4">
+          <option value="custom_openai">自定义 OpenAI 兼容接口</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini</option>
+          <option value="none">不使用 AI</option>
+        </select>
+        <template x-if="['custom_openai','openai','gemini'].includes(config.settings.analyzer.provider)">
+          <div class="space-y-3 pt-2 border-t border-gray-700">
+            <label class="block text-sm text-gray-400">接口地址（Base URL）</label>
+            <input type="text" x-model="config.settings.analyzer.custom_base_url" placeholder="https://open.bigmodel.cn/api/paas/v4"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+            <label class="block text-sm text-gray-400">模型名</label>
+            <input type="text" x-model="config.settings.analyzer.custom_model" placeholder="如 glm-4-flash"
+                   class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+            <label class="block text-sm text-gray-400">API Key（留空不修改，写入 .env）</label>
+            <input type="password" x-model="envInputs.CUSTOM_OPENAI_API_KEY" placeholder="已配置则显示为 ***"
+                   class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+            <span class="text-xs text-gray-500" x-show="config.env_configured && config.env_configured.CUSTOM_OPENAI_API_KEY">已配置</span>
+          </div>
+        </template>
+        <p class="text-xs text-gray-500 mt-3">API Key 保存在 .env，不会出现在 YAML 中。</p>
+      </div>
+
+      <!-- 通知 -->
+      <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='notify'">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">企业微信 / 邮箱</h2>
+        <label class="flex items-center gap-2 text-gray-400 cursor-pointer mb-3">
+          <input type="checkbox" x-model="config.notifications.wechat_work.enabled" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 启用企业微信
+        </label>
+        <div class="space-y-2 mb-4">
+          <label class="block text-sm text-gray-400">Webhook URL（留空不修改）</label>
+          <input type="password" x-model="envInputs.WECHAT_WORK_WEBHOOK" placeholder="已配置则显示为 ***" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <label class="block text-sm text-gray-400">@ 用户（逗号分隔）</label>
+          <input type="text" x-model="wechatMentionStr" placeholder="如 @all" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <label class="block text-sm text-gray-400">重试次数 / 超时（秒）</label>
+          <div class="flex gap-2">
+            <input type="number" x-model.number="config.notifications.wechat_work.retry_times" min="0" class="w-20 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+            <input type="number" x-model.number="config.notifications.wechat_work.timeout" min="1" class="w-20 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          </div>
+        </div>
+        <hr class="border-gray-700 my-4" />
+        <label class="flex items-center gap-2 text-gray-400 cursor-pointer mb-3">
+          <input type="checkbox" x-model="config.notifications.email.enabled" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 启用邮件
+        </label>
+        <div class="space-y-2 mb-4">
+          <input type="text" x-model="config.notifications.email.smtp_server" placeholder="SMTP 服务器" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <div class="flex gap-2 items-center">
+            <input type="number" x-model.number="config.notifications.email.smtp_port" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+            <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer"><input type="checkbox" x-model="config.notifications.email.use_ssl" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> SSL</label>
+          </div>
+          <input type="text" x-model="config.notifications.email.sender" placeholder="发件人" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <input type="text" x-model="config.notifications.email.subject_prefix" placeholder="主题前缀" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <label class="block text-sm text-gray-400">邮箱密码（留空不修改）</label>
+          <input type="password" x-model="envInputs.EMAIL_PASSWORD" placeholder="已配置则显示为 ***" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          <label class="block text-sm text-gray-400">收件人（每行一个）</label>
+          <textarea x-model="emailRecipientsStr" rows="3" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100"></textarea>
+        </div>
+        <h3 class="text-sm text-gray-400 mt-4 mb-2">通知规则</h3>
+        <input type="text" x-model="config.notifications.notification_rules.daily_report_time" placeholder="18:00" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mr-4" />
+        <label class="inline-flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+          <input type="checkbox" x-model="config.notifications.notification_rules.send_empty_report" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 无匹配时也发日报
+        </label>
+      </div>
+
+      <!-- 定时与爬虫 -->
+      <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='schedule'">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">定时运行</h2>
+        <label class="flex items-center gap-2 text-gray-400 cursor-pointer mb-3">
+          <input type="checkbox" x-model="config.settings.scheduler.enabled" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 启用定时任务
+        </label>
+        <label class="block text-sm text-gray-400 mb-1">执行时间（每行 HH:mm）</label>
+        <textarea x-model="schedulerTimesStr" rows="4" placeholder="09:00&#10;11:55" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-3"></textarea>
+        <label class="block text-sm text-gray-400 mb-1">时区</label>
+        <input type="text" x-model="config.settings.scheduler.timezone" placeholder="Asia/Shanghai" class="w-40 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-3" />
+        <label class="block text-sm text-gray-400 mb-1">单次最大运行时间（分钟）</label>
+        <input type="number" x-model.number="config.settings.scheduler.max_runtime_minutes" min="1" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-4" />
+        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">爬虫与评分</h3>
+        <div class="flex gap-4 flex-wrap">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">min_total_score</label>
+            <input type="number" x-model.number="config.settings.scoring.min_total_score" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">max_fetch_details</label>
+            <input type="number" x-model.number="config.settings.spider.max_fetch_details" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-gray-700 pt-4">
+        <button type="submit" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition">保存配置</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    function settingsApp() {
+      return {
+        flash: false,
+        config: {},
+        configSubTab: 'directions',
+        configError: '',
+        envInputs: { CUSTOM_OPENAI_API_KEY: '', WECHAT_WORK_WEBHOOK: '', EMAIL_PASSWORD: '' },
+        newDirectionId: '',
+        newDirectionName: '',
+        presetInclude: ['招标公告', '采购公告', '竞争性谈判公告', '询价公告'],
+        presetExclude: ['废标公告', '流标公告', '中标公告', '成交公告', '结果公示'],
+        noticeTypesIncludePreset: [],
+        noticeTypesExcludePreset: [],
+        noticeTypesIncludeCustom: '',
+        noticeTypesExcludeCustom: '',
+        emailRecipientsStr: '',
+        wechatMentionStr: '',
+        schedulerTimesStr: '',
+        init() {
+          if (new URLSearchParams(window.location.search).get('saved') === '1') {
+            this.flash = true;
+            setTimeout(() => { this.flash = false; window.history.replaceState({}, '', '/settings'); }, 3000);
+          }
+          this.loadConfig();
+        },
+        async loadConfig() {
+          try {
+            const r = await fetch('/api/config');
+            this.config = await r.json();
+            const s = this.config.settings || {};
+            if (!s.scoring) s.scoring = {};
+            if (!s.spider) s.spider = {};
+            if (!s.analyzer) s.analyzer = {};
+            if (!s.scheduler) s.scheduler = { enabled: true, times: [], timezone: 'Asia/Shanghai' };
+            if (s.scheduler.enabled === undefined) s.scheduler.enabled = true;
+            if (!Array.isArray(s.scheduler.times)) s.scheduler.times = [];
+            if (!s.announcement_filter) s.announcement_filter = {};
+            if (!s.announcement_filter.notice_types) s.announcement_filter.notice_types = { enabled: true, include: [], exclude: [], include_correction: true };
+            if (s.analyzer && !['openai','gemini','custom_openai','none'].includes(s.analyzer.provider)) s.analyzer.provider = 'custom_openai';
+            this.config.settings = s;
+            const n = this.config.notifications || {};
+            if (!n.wechat_work) n.wechat_work = {};
+            if (n.wechat_work.retry_times == null) n.wechat_work.retry_times = 3;
+            if (n.wechat_work.timeout == null) n.wechat_work.timeout = 10;
+            if (!n.email) n.email = {};
+            n.email.recipients = n.email.recipients || [];
+            if (!n.notification_rules) n.notification_rules = {};
+            this.config.notifications = n;
+            this.config.business_directions = this.config.business_directions || {};
+            Object.keys(this.config.business_directions).forEach(k => {
+              const d = this.config.business_directions[k];
+              d.keywords_include_str = (d.keywords_include || []).join(', ');
+              d.keywords_exclude_str = (d.keywords_exclude || []).join(', ');
+              d.location_priority = d.location_priority || { province: '', city: '' };
+            });
+            const inc = (s.announcement_filter.notice_types.include || []);
+            const exc = (s.announcement_filter.notice_types.exclude || []);
+            this.noticeTypesIncludePreset = inc.filter(x => this.presetInclude.includes(x));
+            this.noticeTypesExcludePreset = exc.filter(x => this.presetExclude.includes(x));
+            this.noticeTypesIncludeCustom = inc.filter(x => !this.presetInclude.includes(x)).join(', ');
+            this.noticeTypesExcludeCustom = exc.filter(x => !this.presetExclude.includes(x)).join(', ');
+            this.emailRecipientsStr = (n.email.recipients || []).join('\n');
+            this.wechatMentionStr = (n.wechat_work.mention_users || []).join(', ');
+            this.schedulerTimesStr = (s.scheduler.times || []).join('\n');
+            this.config.env_configured = this.config.env_configured || {};
+          } catch (e) { this.config = {}; }
+        },
+        addDirection() {
+          const id = (this.newDirectionId || '').trim().replace(/\s+/g, '_');
+          if (!id) return;
+          if (this.config.business_directions[id]) { this.configError = '该 ID 已存在'; return; }
+          this.config.business_directions[id] = { name: this.newDirectionName || id, keywords_include: [], keywords_exclude: [], keywords_include_str: '', keywords_exclude_str: '', location_required: false, location_priority: { province: '', city: '' }, weight: 1.0, description: '' };
+          this.newDirectionId = ''; this.newDirectionName = '';
+        },
+        removeDirection(key) { if (confirm('确定删除？')) delete this.config.business_directions[key]; },
+        togglePresetInclude(p, checked) {
+          if (checked && !this.noticeTypesIncludePreset.includes(p)) this.noticeTypesIncludePreset = [...this.noticeTypesIncludePreset, p];
+          if (!checked) this.noticeTypesIncludePreset = this.noticeTypesIncludePreset.filter(x => x !== p);
+        },
+        togglePresetExclude(p, checked) {
+          if (checked && !this.noticeTypesExcludePreset.includes(p)) this.noticeTypesExcludePreset = [...this.noticeTypesExcludePreset, p];
+          if (!checked) this.noticeTypesExcludePreset = this.noticeTypesExcludePreset.filter(x => x !== p);
+        },
+        async saveConfig() {
+          this.configError = '';
+          const s = this.config.settings;
+          const payload = { settings: JSON.parse(JSON.stringify(s)), business_directions: {}, notifications: JSON.parse(JSON.stringify(this.config.notifications)) };
+          payload.settings.announcement_filter.notice_types.include = [...(this.noticeTypesIncludePreset || []), ...(this.noticeTypesIncludeCustom || '').split(',').map(x => x.trim()).filter(Boolean)];
+          payload.settings.announcement_filter.notice_types.exclude = [...(this.noticeTypesExcludePreset || []), ...(this.noticeTypesExcludeCustom || '').split(',').map(x => x.trim()).filter(Boolean)];
+          payload.settings.scheduler.times = (this.schedulerTimesStr || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+          payload.notifications.email.recipients = (this.emailRecipientsStr || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+          payload.notifications.wechat_work.mention_users = (this.wechatMentionStr || '').split(',').map(x => x.trim()).filter(Boolean);
+          Object.keys(this.config.business_directions).forEach(k => {
+            const d = this.config.business_directions[k];
+            payload.business_directions[k] = { name: d.name, keywords_include: (d.keywords_include_str || '').split(',').map(x => x.trim()).filter(Boolean), keywords_exclude: (d.keywords_exclude_str || '').split(',').map(x => x.trim()).filter(Boolean), location_required: !!d.location_required, weight: d.weight != null ? d.weight : 1.0, description: d.description || '' };
+            if (d.location_priority && (d.location_priority.province || d.location_priority.city)) payload.business_directions[k].location_priority = d.location_priority;
+            if (d.location_bonus !== undefined) payload.business_directions[k].location_bonus = d.location_bonus;
+          });
+          const env = {};
+          if ((this.envInputs.CUSTOM_OPENAI_API_KEY || '').trim()) env.CUSTOM_OPENAI_API_KEY = this.envInputs.CUSTOM_OPENAI_API_KEY.trim();
+          if ((this.envInputs.WECHAT_WORK_WEBHOOK || '').trim()) env.WECHAT_WORK_WEBHOOK = this.envInputs.WECHAT_WORK_WEBHOOK.trim();
+          if ((this.envInputs.EMAIL_PASSWORD || '').trim()) env.EMAIL_PASSWORD = this.envInputs.EMAIL_PASSWORD.trim();
+          if (Object.keys(env).length) payload.env = env;
+          try {
+            await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            window.location.href = '/settings?saved=1';
+          } catch (e) { this.configError = e.message; }
+        }
+      };
+    }
+  </script>
+  <style>[x-cloak]{display:none !important}</style>
+{% endblock %}

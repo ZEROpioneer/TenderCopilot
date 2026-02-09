@@ -96,6 +96,12 @@ python main.py --mode schedule
 - 13:00
 - 17:55
 
+#### Web 控制台（可选）:
+```bash
+uvicorn web.app:app --reload --host 127.0.0.1 --port 8000
+```
+访问 http://127.0.0.1:8000 查看控制面板、运行任务、查看报告。
+
 ## 📁 项目结构
 
 ```
@@ -106,37 +112,39 @@ TenderCopilot/
 ├── .env                   # 环境变量（不上传）
 │
 ├── config/                 # 配置文件
-│   ├── settings.yaml      # 主配置
+│   ├── settings.yaml      # 主配置（爬虫、调度、数据库、日志等）
 │   ├── business_directions.yaml  # 业务方向和关键词
-│   ├── search_keywords.yaml      # 搜索关键词
-│   ├── filter_settings.yaml      # 筛选配置
-│   └── notifications.yaml        # 通知配置
+│   └── notifications.yaml       # 通知配置
 │
-├── src/                    # 源代码
+├── src/                    # 核心业务逻辑
+│   ├── config/            # 配置管理（ConfigManager、YAML 工具）
 │   ├── spider/            # 爬虫模块
 │   ├── filter/            # 筛选模块
 │   ├── analyzer/          # AI 分析模块
 │   ├── reporter/          # 报告生成模块
 │   ├── notifier/          # 通知模块
 │   ├── scheduler/         # 定时任务模块
-│   └── database/          # 数据库模块
+│   ├── database/          # 数据库模块
+│   └── utils/             # 工具函数
+│
+├── web/                    # Web 界面（FastAPI）
+│   ├── app.py             # 应用入口
+│   ├── api/               # 路由层（调用 src 业务逻辑）
+│   └── templates/         # 页面模板
 │
 ├── tests/                  # 测试文件
-│   ├── test_config.py     # 配置测试
-│   ├── test_imports.py    # 导入测试
-│   └── test_wechat_webhook.py  # Webhook 测试
-│
 ├── docs/                   # 项目文档
-│   ├── IMPLEMENTATION_SUMMARY.md   # 实施总结
-│   ├── IMPLEMENTATION_COMPLETE.md  # 实施完成报告
-│   ├── TESTING_GUIDE.md           # 测试指南
-│   └── API_FIX_SUMMARY.md         # API 修复总结
+│   ├── archive/           # 归档的过程性文档
+│   ├── TESTING_GUIDE.md   # 测试指南
+│   └── REFACTOR_ANALYSIS.md  # 重构分析参考
 │
-├── tools/                  # 开发工具
-│   ├── find_api_endpoint.py      # API 端点查找
-│   ├── test_api_endpoints.py     # API 端点测试
-│   └── verify_codes.py           # 代码验证
+├── tools/                  # 开发/运维工具
+│   ├── find_api_endpoint.py
+│   ├── test_api_endpoints.py
+│   ├── verify_codes.py
+│   └── clear_database.py
 │
+├── prototype/              # 原型测试代码（开发参考）
 ├── data/                   # 数据目录（不上传）
 │   ├── history.db         # SQLite 数据库
 │   ├── reports/           # 生成的报告

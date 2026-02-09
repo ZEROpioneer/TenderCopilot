@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}历史报告 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+{% endblock %}
+{% block content %}
+  <div x-data="historyApp()" x-init="init()" class="space-y-6">
+    <h1 class="text-xl font-semibold text-gray-100">历史报告</h1>
+
+    <!-- 日报列表 · 数据表格 -->
+    <div class="border border-gray-700 rounded-lg overflow-hidden bg-gray-800">
+      <div class="px-4 py-3 border-b border-gray-700">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">日报列表</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead class="bg-gray-700/50 text-gray-400 text-xs uppercase tracking-wider">
+            <tr>
+              <th class="px-4 py-3 font-medium">时间</th>
+              <th class="px-4 py-3 font-medium">报告</th>
+              <th class="px-4 py-3 font-medium w-24">操作</th>
+            </tr>
+          </thead>
+          <tbody class="text-gray-100 divide-y divide-gray-700">
+            <template x-for="r in reports" :key="r.id">
+              <tr class="hover:bg-gray-700/30 transition">
+                <td class="px-4 py-3 text-sm" x-text="r.created || r.filename"></td>
+                <td class="px-4 py-3 text-sm text-gray-400" x-text="r.filename"></td>
+                <td class="px-4 py-3">
+                  <a href="#" @click.prevent="openReport(r.id)" class="text-blue-500 hover:text-blue-400 text-sm font-medium">查看</a>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="reports.length === 0 && !loading">
+              <td colspan="3" class="px-4 py-8 text-center text-gray-500">暂无报告</td>
+            </tr>
+            <tr x-show="loading">
+              <td colspan="3" class="px-4 py-8 text-center text-gray-500">加载中...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 报告详情（点击查看后显示） -->
+    <div x-show="reportDetail" x-cloak class="border border-gray-700 rounded-lg overflow-hidden bg-gray-800">
+      <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-300">报告内容</h2>
+        <button type="button" @click="reportDetail=null" class="text-sm text-gray-400 hover:text-gray-200">关闭</button>
+      </div>
+      <div class="p-4 overflow-x-auto max-h-[70vh] overflow-y-auto prose prose-invert prose-sm max-w-none" x-html="reportDetailHtml"></div>
+    </div>
+
+    <!-- 爬取历史 · 数据表格 -->
+    <div class="border border-gray-700 rounded-lg overflow-hidden bg-gray-800">
+      <div class="px-4 py-3 border-b border-gray-700">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">爬取历史</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead class="bg-gray-700/50 text-gray-400 text-xs uppercase tracking-wider">
+            <tr>
+              <th class="px-4 py-3 font-medium">时间</th>
+              <th class="px-4 py-3 font-medium">数量</th>
+              <th class="px-4 py-3 font-medium">状态</th>
+            </tr>
+          </thead>
+          <tbody class="text-gray-100 divide-y divide-gray-700">
+            <template x-for="c in historyCrawls" :key="c.id">
+              <tr class="hover:bg-gray-700/30 transition">
+                <td class="px-4 py-3 text-sm" x-text="c.crawl_time"></td>
+                <td class="px-4 py-3 text-sm" x-text="c.announcement_count"></td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                        :class="c.success ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'"
+                        x-text="c.success ? '成功' : '失败'"></span>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="historyCrawls.length === 0 && !loadingCrawls">
+              <td colspan="3" class="px-4 py-8 text-center text-gray-500">暂无爬取记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    function historyApp() {
+      return {
+        reports: [],
+        historyCrawls: [],
+        loading: true,
+        loadingCrawls: false,
+        reportDetail: null,
+        reportDetailHtml: '',
+        async init() {
+          await Promise.all([this.loadReports(), this.loadCrawls()]);
+        },
+        async loadReports() {
+          this.loading = true;
+          try {
+            const r = await fetch('/api/reports');
+            const d = await r.json();
+            this.reports = d.reports || [];
+          } catch (e) { this.reports = []; }
+          this.loading = false;
+        },
+        async loadCrawls() {
+          this.loadingCrawls = true;
+          try {
+            const r = await fetch('/api/history/crawls');
+            const d = await r.json();
+            this.historyCrawls = d.crawls || [];
+          } catch (e) { this.historyCrawls = []; }
+          this.loadingCrawls = false;
+        },
+        async openReport(id) {
+          try {
+            const r = await fetch('/api/reports/' + encodeURIComponent(id));
+            const d = await r.json();
+            this.reportDetail = d.markdown;
+            this.reportDetailHtml = typeof marked !== 'undefined' ? marked.parse(d.markdown || '') : (d.markdown || '');
+          } catch (e) { this.reportDetailHtml = '加载失败'; }
+        }
+      };
+    }
+  </script>
+  <style>[x-cloak]{display:none !important}</style>
+{% endblock %}

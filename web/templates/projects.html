@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}项目列表 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+{% endblock %}
+{% block content %}
+  <div class="border border-gray-700 rounded-lg p-4 bg-gray-800">
+    <h1 class="text-lg font-semibold text-gray-100 mb-4">项目列表 · 高分项目</h1>
+    <div class="flex gap-2 mb-4">
+      <select name="order" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-300"
+              hx-get="/api/intel/top/html" hx-trigger="change" hx-target=".intel-page-content" hx-swap="outerHTML"
+              hx-include="[name=min_score]">
+        <option value="score">按分数</option>
+        <option value="time">按时间</option>
+      </select>
+      <select name="min_score" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-300"
+              hx-get="/api/intel/top/html" hx-trigger="change" hx-target=".intel-page-content" hx-swap="outerHTML"
+              hx-include="[name=order]">
+        <option value="80">≥80</option>
+        <option value="60">≥60</option>
+        <option value="0">全部</option>
+      </select>
+    </div>
+    <div class="intel-page-content intel-center-content"
+         hx-get="/api/intel/top/html?min_score=80&limit=50&order=score"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML">
+      <p class="text-gray-500">加载中...</p>
+    </div>
+  </div>
+{% endblock %}

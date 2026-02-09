@@ -9,11 +9,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.templating import Jinja2Templates
 
-from web.api import reports, run as run_api, config as config_api, history
+from web.api import reports, run as run_api, config as config_api, history, logs as logs_api, intel as intel_api, scheduler as scheduler_api
+
+templates_dir = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(templates_dir))
 
 app = FastAPI(
     title="TenderCopilot",
@@ -36,6 +39,9 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(run_api.router, prefix="/api/run", tags=["run"])
 app.include_router(config_api.router, prefix="/api/config", tags=["config"])
 app.include_router(history.router, prefix="/api/history", tags=["history"])
+app.include_router(logs_api.router, prefix="/api/logs", tags=["logs"])
+app.include_router(intel_api.router, prefix="/api/intel", tags=["intel"])
+app.include_router(scheduler_api.router, prefix="/api/scheduler", tags=["scheduler"])
 
 # Static files (after routes so /api/* take precedence)
 static_dir = Path(__file__).parent / "static"
@@ -49,9 +55,24 @@ def health():
 
 
 @app.get("/")
-def index():
-    """Serve the single-page UI."""
-    index_file = Path(__file__).parent / "static" / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
-    return {"message": "TenderCopilot API", "docs": "/docs", "ui": "Place static/index.html for UI"}
+def dashboard(request: Request):
+    """控制台：控制面板、实时日志、高分项目、快速配置。"""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+
+@app.get("/projects")
+def projects(request: Request):
+    """项目列表：高分项目情报。"""
+    return templates.TemplateResponse("projects.html", {"request": request})
+
+
+@app.get("/settings")
+def settings(request: Request):
+    """配置管理：完整配置表单（深色卡片）。"""
+    return templates.TemplateResponse("settings.html", {"request": request})
+
+
+@app.get("/history")
+def history_page(request: Request):
+    """历史报告：日报列表与爬取历史（深色数据表格）。"""
+    return templates.TemplateResponse("history.html", {"request": request})

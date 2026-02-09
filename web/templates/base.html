@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}TenderCopilot{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class', theme: { extend: {} } };
+  </script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen antialiased">
+  <!-- 全局导航栏 -->
+  <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-900/95 backdrop-blur">
+    <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-14">
+        <a href="/" class="text-lg font-bold text-blue-500 hover:text-blue-400 transition">
+          TenderCopilot
+        </a>
+        <div class="flex items-center gap-1">
+          <a href="/" class="px-3 py-2 rounded-md text-sm font-medium transition {% if request.url.path == '/' %}bg-gray-800 text-blue-400{% else %}text-gray-400 hover:text-gray-100 hover:bg-gray-800{% endif %}">
+            控制台
+          </a>
+          <a href="/projects" class="px-3 py-2 rounded-md text-sm font-medium transition {% if request.url.path == '/projects' %}bg-gray-800 text-blue-400{% else %}text-gray-400 hover:text-gray-100 hover:bg-gray-800{% endif %}">
+            项目列表
+          </a>
+          <a href="/settings" class="px-3 py-2 rounded-md text-sm font-medium transition {% if request.url.path == '/settings' %}bg-gray-800 text-blue-400{% else %}text-gray-400 hover:text-gray-100 hover:bg-gray-800{% endif %}">
+            配置管理
+          </a>
+          <a href="/history" class="px-3 py-2 rounded-md text-sm font-medium transition {% if request.url.path == '/history' %}bg-gray-800 text-blue-400{% else %}text-gray-400 hover:text-gray-100 hover:bg-gray-800{% endif %}">
+            历史报告
+          </a>
+        </div>
+      </div>
+    </nav>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

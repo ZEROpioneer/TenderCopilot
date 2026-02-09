@@ -1,32 +1,23 @@
 """History API: crawl history and stats."""
+import sys
 from pathlib import Path
+
 from fastapi import APIRouter
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.database import get_db
 
 router = APIRouter()
-
-
-def _get_db():
-    import sys
-    import os
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    os.chdir(ROOT)
-    from src.config.config_manager import ConfigManager
-    from src.database.storage import DatabaseManager
-    cfg = ConfigManager(str(ROOT / "config")).load_all().to_dict()
-    db_path = cfg.get("database", {}).get("path", "data/history.db")
-    if not Path(db_path).is_absolute():
-        db_path = str(ROOT / db_path)
-    return DatabaseManager(db_path)
 
 
 @router.get("/crawls")
 def list_crawls(limit: int = 50):
     """List crawl history rows (crawl_time, announcement_count, success)."""
     try:
-        db = _get_db()
+        db = get_db(ROOT)
         rows = db.execute_query(
             "SELECT id, crawl_time, announcement_count, success FROM crawl_history ORDER BY crawl_time DESC LIMIT ?",
             (limit,),
@@ -46,7 +37,7 @@ def list_crawls(limit: int = 50):
 def get_stats(days: int = 30):
     """Aggregate stats for charts (e.g. per-day crawl count, match count)."""
     try:
-        db = _get_db()
+        db = get_db(ROOT)
         # By day: date, total_crawls, total_announcements
         rows = db.execute_query("""
             SELECT date(crawl_time) as d, COUNT(*), COALESCE(SUM(announcement_count), 0)

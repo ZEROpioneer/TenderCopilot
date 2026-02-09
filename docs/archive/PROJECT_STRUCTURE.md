@@ -70,6 +70,7 @@ TenderCopilot/
 │   └── README.md               # 工具说明
 │
 ├── docs/                        # 文档目录
+│   ├── archive/                # 归档的过程性文档
 │   ├── API_FIX_SUMMARY.md      # API 修复总结
 │   ├── IMPLEMENTATION_COMPLETE.md  # 实现完成文档
 │   ├── IMPLEMENTATION_SUMMARY.md   # 实现总结

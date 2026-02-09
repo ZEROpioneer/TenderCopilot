@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}控制台 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    .log-console { font-size: 11px; white-space: pre-wrap; word-break: break-all; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <!-- 左侧：控制面板 -->
+    <aside class="lg:col-span-4 xl:col-span-3 space-y-4">
+      <section class="border border-gray-700 rounded-lg p-4 bg-gray-800">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">控制面板</h2>
+        <div class="flex items-center gap-2 mb-3" id="scheduler-status"
+             hx-get="/api/scheduler/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+          <span class="text-gray-500">加载中...</span>
+        </div>
+        <div class="flex flex-col gap-2">
+          <button type="button"
+                  hx-post="/api/run"
+                  hx-trigger="click"
+                  hx-swap="none"
+                  hx-on::after-request="document.getElementById('run-status').dispatchEvent(new CustomEvent('refresh'))"
+                  class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded border border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition">
+            立即运行一次
+          </button>
+          <div id="run-status" class="text-sm text-gray-500"
+               hx-get="/api/run/status" hx-trigger="load, every 2s, refresh from:body"
+               hx-swap="innerHTML" hx-on::before-request="if(document.querySelector('[hx-post=\'/api/run\']')) document.querySelector('[hx-post=\'/api/run\']').disabled = (document.body.getAttribute('data-run') === 'running')">
+            <span>就绪</span>
+          </div>
+        </div>
+        <div class="mt-3 pt-3 border-t border-gray-700">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="scheduler-checkbox" class="rounded border-gray-600 bg-gray-800 text-blue-500"
+                   onchange="toggleScheduler(this.checked)" />
+            <span class="text-sm text-gray-400">定时任务</span>
+          </label>
+          <p class="text-xs text-gray-500 mt-1">需使用 python main.py --mode schedule 启动</p>
+        </div>
+      </section>
+
+      <section class="border border-gray-700 rounded-lg overflow-hidden bg-gray-800">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider px-4 py-2 border-b border-gray-700">实时日志</h2>
+        <pre class="log-console p-4 h-64 overflow-y-auto m-0 text-gray-500"
+             hx-get="/api/logs/tail?lines=50"
+             hx-trigger="load, every 3s"
+             hx-swap="innerHTML">Loading...</pre>
+      </section>
+    </aside>
+
+    <!-- 中间：情报中心 -->
+    <section class="lg:col-span-8 xl:col-span-6 border border-gray-700 rounded-lg p-4 bg-gray-800">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">情报中心 · 高分项目 (≥80)</h2>
+      <div class="flex gap-2 mb-3">
+        <select name="order" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-300"
+                hx-get="/api/intel/top/html" hx-trigger="change" hx-target=".intel-center-content" hx-swap="outerHTML"
+                hx-include="[name=min_score]">
+          <option value="score">按分数</option>
+          <option value="time">按时间</option>
+        </select>
+        <select name="min_score" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-300"
+                hx-get="/api/intel/top/html" hx-trigger="change" hx-target=".intel-center-content" hx-swap="outerHTML"
+                hx-include="[name=order]">
+          <option value="80">≥80</option>
+          <option value="60">≥60</option>
+          <option value="0">全部</option>
+        </select>
+      </div>
+      <div class="intel-center-content"
+           hx-get="/api/intel/top/html?min_score=80&limit=20&order=score"
+           hx-trigger="load, every 30s"
+           hx-swap="innerHTML">
+        <p class="text-gray-500">加载中...</p>
+      </div>
+    </section>
+
+    <!-- 右侧：快速配置 -->
+    <aside class="lg:col-span-12 xl:col-span-3 border border-gray-700 rounded-lg p-4 bg-gray-800">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">快速配置</h2>
+      <p class="text-xs text-gray-500 mb-2">添加监控关键词（写入 business_directions）</p>
+      <div id="quick-config-loader" hx-get="/api/config" hx-trigger="load" hx-swap="none" class="hidden"></div>
+      <div class="space-y-2">
+        <input type="text" name="keyword" placeholder="例如：无人机" required
+               class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+        <select name="direction" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-300">
+          <option value="cultural_atmosphere">文化氛围类</option>
+          <option value="digital_hall">数字史馆类</option>
+          <option value="simulation_training">仿真训练系统类</option>
+          <option value="cinema_service">院线电影服务类</option>
+        </select>
+        <button type="button" class="w-full py-2 px-3 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded border border-gray-600 transition"
+                onclick="quickConfigAddKeyword()">
+          添加关键词
+        </button>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    function toggleScheduler(enabled) {
+      fetch('/api/scheduler', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: enabled }) })
+        .then(function() { htmx.ajax('get', '/api/scheduler/status', { target: '#scheduler-status', swap: 'innerHTML' }); });
+    }
+    document.body.addEventListener('htmx:afterRequest', function(ev) {
+      if (ev.detail.target.id === 'scheduler-status' && ev.detail.xhr.response) {
+        try {
+          var d = JSON.parse(ev.detail.xhr.response);
+          var dot = d.enabled ? 'bg-green-500' : 'bg-gray-500';
+          var msg = d.enabled ? '定时任务已启用' : '定时任务已关闭';
+          ev.detail.target.innerHTML = '<span class="w-2 h-2 rounded-full ' + dot + '"></span><span class="text-sm text-gray-400">' + msg + '</span>';
+          var cb = document.getElementById('scheduler-checkbox');
+          if (cb) cb.checked = d.enabled;
+        } catch (_) {}
+      }
+      if (ev.detail.target.id === 'run-status' && ev.detail.xhr.response) {
+        try {
+          var d = JSON.parse(ev.detail.xhr.response);
+          document.body.setAttribute('data-run', d.status || '');
+          var btn = document.querySelector('[hx-post="/api/run"]');
+          if (btn) btn.disabled = (d.status === 'running');
+          var msg = d.status === 'running' ? '运行中...' : (d.last_run_time ? '上次: ' + d.last_run_time : (d.message || '就绪'));
+          ev.detail.target.innerHTML = '<span>' + msg + '</span>';
+        } catch (_) {}
+      }
+      if (ev.detail.target.id === 'quick-config-loader' && ev.detail.xhr.response) {
+        try {
+          var cfg = JSON.parse(ev.detail.xhr.response);
+          var dirs = cfg.business_directions || {};
+          var sel = document.querySelector('select[name=direction]');
+          if (sel && Object.keys(dirs).length > 0) {
+            sel.innerHTML = Object.keys(dirs).map(function(k) { return '<option value="' + k + '">' + (dirs[k].name || k) + '</option>'; }).join('');
+          }
+        } catch (_) {}
+      }
+    });
+    function quickConfigAddKeyword() {
+      var kw = document.querySelector('input[name=keyword]').value.trim();
+      var dir = document.querySelector('select[name=direction]').value;
+      if (!kw) return;
+      fetch('/api/config').then(function(r) { return r.json(); }).then(function(cfg) {
+        var dirs = cfg.business_directions || {};
+        if (!dirs[dir]) { dirs[dir] = { name: dir, keywords_include: [], keywords_exclude: [], location_required: false, weight: 1.0, description: '' }; }
+        var inc = dirs[dir].keywords_include || [];
+        if (inc.indexOf(kw) >= 0) { alert('已存在'); return; }
+        inc.push(kw);
+        dirs[dir] = Object.assign({}, dirs[dir], { keywords_include: inc });
+        return fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ business_directions: dirs }) });
+      }).then(function(r) { if (r && r.ok) { document.querySelector('input[name=keyword]').value = ''; alert('已添加'); } });
+    }
+  </script>
+{% endblock %}
