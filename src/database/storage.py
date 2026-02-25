@@ -2,9 +2,18 @@
 
 import sqlite3
 import json
-from datetime import datetime
+import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 from loguru import logger
+
+from src.utils.project_fingerprint import (
+    extract_project_refs_from_title,
+    make_fingerprint,
+)
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class DatabaseManager:
@@ -14,6 +23,7 @@ class DatabaseManager:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = None
+        self.lock = threading.Lock()
         self.init_database()
     
     def init_database(self):
@@ -174,84 +184,81 @@ class DatabaseManager:
         self.conn.commit()
         logger.info("✅ 数据库初始化完成（含 7 个性能索引）")
     
-    def save_announcement(self, announcement):
+    def save_announcement(self, item: "TenderItem") -> bool:
         """保存公告"""
-        cursor = self.conn.cursor()
-        
-        try:
-            cursor.execute("""
-                INSERT OR REPLACE INTO announcements 
-                (id, title, content, pub_date, url, location, budget, deadline, contact, attachments, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (
-                announcement['id'],
-                announcement['title'],
-                announcement.get('content'),
-                announcement.get('pub_date'),
-                announcement.get('url'),
-                announcement.get('location'),
-                announcement.get('budget'),
-                announcement.get('deadline'),
-                announcement.get('contact'),
-                json.dumps(announcement.get('attachments', []))
-            ))
-            
-            self.conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ 保存公告失败: {e}")
-            return False
+        with self.lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO announcements 
+                    (id, title, content, pub_date, url, location, budget, deadline, contact, attachments, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (
+                    item.project_id,
+                    item.title,
+                    item.content_raw,
+                    item.publish_date,
+                    item.url,
+                    item.location,
+                    item.budget,
+                    item.deadline,
+                    item.contact,
+                    json.dumps(item.attachments or [])
+                ))
+                self.conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"❌ 保存公告失败: {e}")
+                return False
     
     def save_filtered_project(self, announcement_id, match_results, feasibility):
         """保存筛选项目。同一公告当日已存在则跳过，避免重复插入。"""
-        cursor = self.conn.cursor()
-        
-        try:
-            # 去重：当日已存在该 announcement_id 则跳过
-            cursor.execute("""
-                SELECT 1 FROM filtered_projects
-                WHERE announcement_id = ? AND date(filtered_at) = date('now', 'localtime')
-            """, (announcement_id,))
-            if cursor.fetchone():
-                logger.debug(f"⏭️ 跳过重复写入 filtered_projects: {announcement_id}")
+        with self.lock:
+            cursor = self.conn.cursor()
+            try:
+                # 去重：当日已存在该 announcement_id 则跳过
+                cursor.execute("""
+                    SELECT 1 FROM filtered_projects
+                    WHERE announcement_id = ? AND date(filtered_at) = date('now', 'localtime')
+                """, (announcement_id,))
+                if cursor.fetchone():
+                    logger.debug(f"⏭️ 跳过重复写入 filtered_projects: {announcement_id}")
+                    return True
+                cursor.execute("""
+                    INSERT INTO filtered_projects 
+                    (announcement_id, matched_directions, feasibility_score, feasibility_level)
+                    VALUES (?, ?, ?, ?)
+                """, (
+                    announcement_id,
+                    json.dumps(match_results),
+                    feasibility['total'],
+                    feasibility['level']
+                ))
+                self.conn.commit()
                 return True
-            cursor.execute("""
-                INSERT INTO filtered_projects 
-                (announcement_id, matched_directions, feasibility_score, feasibility_level)
-                VALUES (?, ?, ?, ?)
-            """, (
-                announcement_id,
-                json.dumps(match_results),
-                feasibility['total'],
-                feasibility['level']
-            ))
-            
-            self.conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ 保存筛选项目失败: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"❌ 保存筛选项目失败: {e}")
+                return False
     
     def save_analysis_result(self, announcement_id, extracted_info, confidence_score):
         """保存分析结果"""
-        cursor = self.conn.cursor()
-        
-        try:
-            cursor.execute("""
-                INSERT OR REPLACE INTO analysis_results 
-                (announcement_id, extracted_info, confidence_score, analyzed_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            """, (
-                announcement_id,
-                json.dumps(extracted_info),
-                confidence_score
-            ))
-            
-            self.conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ 保存分析结果失败: {e}")
-            return False
+        with self.lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO analysis_results 
+                    (announcement_id, extracted_info, confidence_score, analyzed_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """, (
+                    announcement_id,
+                    json.dumps(extracted_info),
+                    confidence_score
+                ))
+                self.conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"❌ 保存分析结果失败: {e}")
+                return False
     
     def add_interested_project(
         self,
@@ -265,31 +272,32 @@ class DatabaseManager:
         Returns: 新增的指纹数量（0/1/2）
         """
         import hashlib
-        added = 0
-        seen_fp = set()
-        cursor = self.conn.cursor()
-        for raw in (project_code, project_name):
-            norm = self._normalize_for_fingerprint(raw) if raw else ""
-            if not norm or len(norm) < 2:
-                continue
-            fp = hashlib.sha256(norm.encode('utf-8')).hexdigest()
-            if fp in seen_fp:
-                continue
-            seen_fp.add(fp)
-            code_val = raw if (project_code and raw == project_code) else None
-            name_val = raw if (project_name and raw == project_name) else None
-            try:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO interested_projects 
-                    (project_fingerprint, project_code, project_name, source_announcement_id, feasibility_score)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (fp, code_val, name_val, source_announcement_id, feasibility_score))
-                if cursor.rowcount > 0:
-                    added += 1
-            except Exception as e:
-                logger.warning(f"添加追踪指纹时忽略重复: {e}")
-        self.conn.commit()
-        return added
+        with self.lock:
+            added = 0
+            seen_fp = set()
+            cursor = self.conn.cursor()
+            for raw in (project_code, project_name):
+                norm = self._normalize_for_fingerprint(raw) if raw else ""
+                if not norm or len(norm) < 2:
+                    continue
+                fp = hashlib.sha256(norm.encode('utf-8')).hexdigest()
+                if fp in seen_fp:
+                    continue
+                seen_fp.add(fp)
+                code_val = raw if (project_code and raw == project_code) else None
+                name_val = raw if (project_name and raw == project_name) else None
+                try:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO interested_projects 
+                        (project_fingerprint, project_code, project_name, source_announcement_id, feasibility_score)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (fp, code_val, name_val, source_announcement_id, feasibility_score))
+                    if cursor.rowcount > 0:
+                        added += 1
+                except Exception as e:
+                    logger.warning(f"添加追踪指纹时忽略重复: {e}")
+            self.conn.commit()
+            return added
     
     def is_interested_project(self, project_fingerprint: str) -> bool:
         """检查项目指纹是否在追踪名单中"""
@@ -307,7 +315,47 @@ class DatabaseManager:
             "SELECT project_fingerprint FROM interested_projects"
         ).fetchall()
         return {row[0] if hasattr(row, '__getitem__') else row['project_fingerprint'] for row in rows}
-    
+
+    def is_project_tracked(self, project_id: str, title: str) -> bool:
+        """判断项目是否已被追踪（老熟人）。
+
+        用于双轨制过滤：更正/变更/流标/废标/结果/中标类公告，仅当关联项目
+        在历史记录中时才放行，否则一律丢弃。
+
+        判断逻辑：
+        1. project_id 在 announcements 中存在 -> 我们曾抓过该公告
+        2. 从 title 提取项目标识，其指纹在 interested_projects 中 -> 我们曾关注过该项目
+
+        Returns:
+            True: 老熟人，可放行
+            False: 未见过，应丢弃
+        """
+        if not project_id and not (title or "").strip():
+            return False
+
+        cursor = self.conn.cursor()
+
+        # 1. 相同 project_id 的历史记录
+        if project_id:
+            row = cursor.execute(
+                "SELECT 1 FROM announcements WHERE id = ?", (project_id,)
+            ).fetchone()
+            if row is not None:
+                return True
+
+        # 2. 标题相似：提取项目标识，检查 interested_projects
+        refs = extract_project_refs_from_title(title or "")
+        if not refs:
+            return False
+
+        fingerprints = self.get_interested_fingerprints_set()
+        for ref in refs:
+            fp = make_fingerprint(ref)
+            if fp and fp in fingerprints:
+                return True
+
+        return False
+
     @staticmethod
     def _normalize_for_fingerprint(s: str) -> str:
         """清洗字符串用于指纹计算"""
@@ -328,35 +376,35 @@ class DatabaseManager:
     
     def log_notification(self, announcement_id, channel, status, error_message=None):
         """记录通知日志"""
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT INTO notification_logs 
-            (announcement_id, channel, status, error_message)
-            VALUES (?, ?, ?, ?)
-        """, (announcement_id, channel, status, error_message))
-        self.conn.commit()
+        with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT INTO notification_logs 
+                (announcement_id, channel, status, error_message)
+                VALUES (?, ?, ?, ?)
+            """, (announcement_id, channel, status, error_message))
+            self.conn.commit()
     
     def log_task(self, task_name, status, start_time, end_time, stats=None, error_message=None):
         """记录任务日志"""
-        cursor = self.conn.cursor()
-        
-        duration = (end_time - start_time).total_seconds()
-        
-        cursor.execute("""
-            INSERT INTO task_logs 
-            (task_name, status, start_time, end_time, duration_seconds, crawled_count, matched_count, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            task_name,
-            status,
-            start_time,
-            end_time,
-            duration,
-            stats.get('crawled', 0) if stats else 0,
-            stats.get('matched', 0) if stats else 0,
-            error_message
-        ))
-        self.conn.commit()
+        with self.lock:
+            cursor = self.conn.cursor()
+            duration = (end_time - start_time).total_seconds()
+            cursor.execute("""
+                INSERT INTO task_logs 
+                (task_name, status, start_time, end_time, duration_seconds, crawled_count, matched_count, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                task_name,
+                status,
+                start_time,
+                end_time,
+                duration,
+                stats.get('crawled', 0) if stats else 0,
+                stats.get('matched', 0) if stats else 0,
+                error_message
+            ))
+            self.conn.commit()
     
     def get_recent_projects(self, days=7, status=None):
         """查询最近的项目"""
@@ -387,26 +435,23 @@ class DatabaseManager:
         Returns:
             查询结果
         """
-        cursor = self.conn.cursor()
-        
-        try:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            
-            # 如果是 SELECT 查询，返回结果
-            if query.strip().upper().startswith('SELECT'):
-                return cursor.fetchall()
-            
-            # 否则提交事务
-            self.conn.commit()
-            return cursor.rowcount
-            
-        except Exception as e:
-            logger.error(f"❌ 执行查询失败: {e}")
-            self.conn.rollback()
-            raise
+        with self.lock:
+            cursor = self.conn.cursor()
+            try:
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                # 如果是 SELECT 查询，返回结果
+                if query.strip().upper().startswith('SELECT'):
+                    return cursor.fetchall()
+                # 否则提交事务
+                self.conn.commit()
+                return cursor.rowcount
+            except Exception as e:
+                logger.error(f"❌ 执行查询失败: {e}")
+                self.conn.rollback()
+                raise
     
     def close(self):
         """关闭数据库连接"""

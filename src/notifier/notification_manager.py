@@ -1,9 +1,13 @@
 """通知管理器 - 统一处理所有通知渠道"""
 
+from typing import List, Optional, TYPE_CHECKING
 from loguru import logger
 from .wechat_work import WechatWorkNotifier
 from .email_sender import EmailSender
 from .wechat import WechatNotifier
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class NotificationManager:
@@ -17,7 +21,7 @@ class NotificationManager:
         self.email = EmailSender(config) if config.get('email', {}).get('enabled') else None
         self.wechat = WechatNotifier(config) if config.get('wechat', {}).get('enabled') else None
     
-    def send_report(self, report_content, projects=None):
+    def send_report(self, report_content: str, projects: Optional[List["TenderItem"]] = None) -> bool:
         """发送报告到所有启用的渠道"""
         success_count = 0
         
@@ -30,7 +34,7 @@ class NotificationManager:
         if self.wechat:
             title = f"招标项目日报"
             if projects:
-                high_count = sum(1 for p in projects if p['feasibility']['total'] >= 80)
+                high_count = sum(1 for p in projects if p.feasibility['total'] >= 80)
                 if high_count > 0:
                     title = f"【{high_count}个高优先级】{title}"
             

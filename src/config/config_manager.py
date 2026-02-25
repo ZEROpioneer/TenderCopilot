@@ -133,22 +133,48 @@ class ConfigManager:
     def _process_env_vars(self):
         """处理配置中的环境变量引用
         
-        将形如 ${VAR_NAME} 的字符串替换为环境变量值
+        将形如 ${VAR_NAME} 的字符串替换为环境变量值。
+        仅对「当前启用功能」所需的环境变量未设置时发出警告，避免噪音。
         """
+        # 收集当前启用功能所需的环境变量
+        required_vars = set()
+        provider = self._config.get("analyzer", {}).get("provider", "")
+        if provider == "gemini":
+            required_vars.add("GEMINI_API_KEY")
+        elif provider == "custom_openai":
+            required_vars.add("CUSTOM_OPENAI_API_KEY")
+        elif provider == "openai":
+            required_vars.add("OPENAI_API_KEY")
+
+        n = self._config.get("wechat_work", {}) or {}
+        if n.get("enabled"):
+            required_vars.add("WECHAT_WORK_WEBHOOK")
+        n = self._config.get("email", {}) or {}
+        if n.get("enabled"):
+            required_vars.add("EMAIL_PASSWORD")
+        n = self._config.get("wechat", {}) or {}
+        if n.get("enabled"):
+            required_vars.add("WECHAT_PERSONAL_TOKEN")
+        n = self._config.get("dingtalk", {}) or {}
+        if n.get("enabled"):
+            required_vars.add("DINGTALK_WEBHOOK")
+            required_vars.add("DINGTALK_SECRET")
+
         def replace_env_vars(obj):
             if isinstance(obj, dict):
                 return {k: replace_env_vars(v) for k, v in obj.items()}
             elif isinstance(obj, list):
                 return [replace_env_vars(item) for item in obj]
-            elif isinstance(obj, str) and obj.startswith('${') and obj.endswith('}'):
+            elif isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
                 var_name = obj[2:-1]
                 env_value = os.getenv(var_name)
-                if env_value is None:
-                    logger.warning(f"⚠️ 环境变量未设置: {var_name}")
-                    return ''
+                if env_value is None or (isinstance(env_value, str) and not env_value.strip()):
+                    if var_name in required_vars:
+                        logger.warning(f"⚠️ 环境变量未设置（当前功能需要）: {var_name}")
+                    return ""
                 return env_value
             return obj
-        
+
         self._config = replace_env_vars(self._config)
     
     def _apply_defaults(self):

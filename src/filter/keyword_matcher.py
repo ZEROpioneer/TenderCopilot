@@ -1,7 +1,10 @@
 """关键词匹配器"""
 
 from loguru import logger
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class KeywordMatcher:
@@ -16,18 +19,18 @@ class KeywordMatcher:
         self.directions = config['business_directions']
         self.exclude_keywords = config['global_exclude']['keywords']
     
-    def match(self, announcement: Dict[str, str]) -> Optional[Dict[str, Dict[str, Any]]]:
+    def match(self, item: "TenderItem") -> Optional[Dict[str, Dict[str, Any]]]:
         """匹配业务方向
         
         Args:
-            announcement: 公告字典，包含 title, content, summary 等字段
+            item: 招标项目（TenderItem）
             
         Returns:
             匹配结果字典，如果无匹配则返回 None
         """
-        title = announcement['title']
-        content = announcement.get('content', '')
-        summary = announcement.get('summary', '')
+        title = item.title or ""
+        content = item.content_raw or ""
+        summary = item.summary or ""
         text = f"{title} {summary} {content}"
         
         # 检查排除关键词

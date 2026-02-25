@@ -6,8 +6,11 @@
 - 针对更正公告（更正公告）可选择性保留
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
 from loguru import logger
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class NoticeTypeFilter:
@@ -17,7 +20,7 @@ class NoticeTypeFilter:
         announcement_filter = config.get("announcement_filter", {})
         self.types_cfg: Dict[str, Any] = announcement_filter.get("notice_types", {})
 
-    def match(self, announcement: Dict[str, Any]) -> Dict[str, Any]:
+    def match(self, item: "TenderItem") -> Dict[str, Any]:
         """判断公告类型是否匹配
 
         返回:
@@ -28,12 +31,8 @@ class NoticeTypeFilter:
             }
         """
         enabled = self.types_cfg.get("enabled", False)
-        notice_type = (
-            announcement.get("notice_type_raw")
-            or announcement.get("notice_type")
-            or "未知公告类型"
-        )
-        title = (announcement.get("title") or "").strip()
+        notice_type = (item.announcement_type or item.notice_type_raw or "未知公告类型")
+        title = (item.title or "").strip()
 
         normalized_type = notice_type.strip() or "未知公告类型"
 

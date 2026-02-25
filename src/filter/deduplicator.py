@@ -1,7 +1,10 @@
 """去重处理器"""
 
 from loguru import logger
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class Deduplicator:
@@ -15,18 +18,17 @@ class Deduplicator:
         """
         self.db = db
     
-    def is_duplicate(self, announcement: Dict[str, Any]) -> bool:
+    def is_duplicate(self, item: "TenderItem") -> bool:
         """检查是否重复（完整检查）
         
         Args:
-            announcement: 公告字典，必须包含 'id' 字段
+            item: 招标项目（TenderItem）
             
         Returns:
             True: 已存在（重复）
             False: 不存在（新公告）
         """
-        announcement_id = announcement['id']
-        return self.db.exists(announcement_id)
+        return self.db.exists(item.project_id)
     
     def is_duplicate_fast(self, announcement_id: str) -> bool:
         """快速检查ID是否重复（用于爬取阶段）

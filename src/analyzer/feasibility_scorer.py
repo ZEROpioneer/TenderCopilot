@@ -2,7 +2,10 @@
 
 from datetime import datetime
 from loguru import logger
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class FeasibilityScorer:
@@ -19,7 +22,7 @@ class FeasibilityScorer:
     
     def calculate(
         self,
-        announcement: Dict,
+        item: "TenderItem",
         match_results: Dict,
         location_result: Dict,
         content_analysis: Optional[Dict] = None,
@@ -72,7 +75,7 @@ class FeasibilityScorer:
             content_score = 10
 
         # 3. 时间评分（0-20），只要未过期就给中高分，主要用于排序
-        time_score_result = self._calculate_time_score(announcement, ai_extracted)
+        time_score_result = self._calculate_time_score(item, ai_extracted)
         time_total = time_score_result["total"]  # 仍然是 0-15
         # 轻微放大到 0-20 区间，避免比重过小
         time_score = min(time_total / 15 * 20, 20) if time_total > 0 else 0
@@ -119,37 +122,19 @@ class FeasibilityScorer:
     def _calculate_ai_completeness(self, ai_extracted: Dict) -> float:
         """计算AI提取的完整性（0-1.0）
         
-        检查关键字段是否被成功提取：
-        - 资格要求
-        - 预算信息
-        - 报名方式
-        - 开标时间
-        - 联系人
-        
-        Args:
-            ai_extracted: AI提取结果
-            
-        Returns:
-            完整性分数 0-1.0
+        检查关键字段：confidentiality_req, project_summary, doc_deadline, bid_deadline, budget_info
         """
         if not ai_extracted:
             return 0
-        
-        # 定义关键字段
-        key_fields = ['qualifications', 'budget', 'registration_method', 'opening_time', 'contact']
-        
-        # 计算有效字段数
-        valid_count = 0
-        for field in key_fields:
-            value = ai_extracted.get(field)
-            # 检查字段是否有实质内容
-            if value and str(value).strip() and str(value) not in ['无', '未提供', 'N/A', '']:
-                valid_count += 1
-        
-        completeness = valid_count / len(key_fields)
-        return completeness
+        key_fields = ['confidentiality_req', 'project_summary', 'doc_deadline', 'bid_deadline', 'budget_info']
+        empty_vals = ['无', '未提供', 'N/A', '', '未知', '未公布']
+        valid_count = sum(
+            1 for f in key_fields
+            if (ai_extracted.get(f) or '').strip() and str(ai_extracted.get(f) or '').strip() not in empty_vals
+        )
+        return valid_count / len(key_fields)
     
-    def _calculate_time_score(self, announcement: Dict, ai_extracted: Optional[Dict] = None) -> Dict:
+    def _calculate_time_score(self, item: "TenderItem", ai_extracted: Optional[Dict] = None) -> Dict:
         """计算时间综合评分（优化版）
         
         评分维度：
@@ -165,7 +150,7 @@ class FeasibilityScorer:
         score = {'publish_freshness': 0, 'deadline_adequacy': 0, 'details': {}}
         
         # 1. 发布新鲜度 (5分)
-        publish_date_str = announcement.get('publish_date') or announcement.get('pub_date', '')
+        publish_date_str = item.publish_date or item.pub_date or ''
         if publish_date_str:
             try:
                 publish_date = self._parse_date(publish_date_str)
@@ -191,11 +176,14 @@ class FeasibilityScorer:
                 score['details']['freshness'] = '发布时间未知'
         
         # 2. 截止充足度 (10分)
-        deadline_str = None
-        if ai_extracted:
-            deadline_str = ai_extracted.get('opening_time') or ai_extracted.get('deadline')
-        if not deadline_str:
-            deadline_str = announcement.get('deadline')
+        deadline_str = (
+            (getattr(item, 'bid_deadline', '') or getattr(item, 'doc_deadline', ''))
+            or (ai_extracted and (
+                ai_extracted.get('bid_deadline') or ai_extracted.get('doc_deadline')
+                or ai_extracted.get('opening_time') or ai_extracted.get('deadline')
+            ))
+            or item.deadline
+        )
         
         if deadline_str:
             try:
@@ -261,7 +249,7 @@ class FeasibilityScorer:
         except:
             return None
     
-    def _calculate_deadline_score(self, announcement: Dict, ai_extracted: Optional[Dict]) -> float:
+    def _calculate_deadline_score(self, item: "TenderItem", ai_extracted: Optional[Dict]) -> float:
         """计算时间充足度评分（0-10）
         
         Args:
@@ -272,13 +260,14 @@ class FeasibilityScorer:
             时间评分 0-10
         """
         # 尝试从多个来源获取截止时间
-        deadline_str = None
-        
-        if ai_extracted:
-            deadline_str = ai_extracted.get('opening_time') or ai_extracted.get('deadline')
-        
-        if not deadline_str:
-            deadline_str = announcement.get('deadline')
+        deadline_str = (
+            (getattr(item, 'bid_deadline', '') or getattr(item, 'doc_deadline', ''))
+            or (ai_extracted and (
+                ai_extracted.get('bid_deadline') or ai_extracted.get('doc_deadline')
+                or ai_extracted.get('opening_time') or ai_extracted.get('deadline')
+            ))
+            or item.deadline
+        )
         
         if not deadline_str:
             # 没有明确截止时间，给中等分

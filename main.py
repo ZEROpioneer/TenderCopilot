@@ -36,7 +36,6 @@ class TenderCopilot:
         # 初始化组件
         self.db = DatabaseManager(self.config['database']['path'])
         self.crawl_tracker = CrawlTracker(self.db, self.config)
-        self.api_client = None
         self.spider = None
         self.attachment_handler = None
         self.keyword_matcher = None
@@ -107,10 +106,6 @@ class TenderCopilot:
     def init_components(self):
         """初始化所有组件"""
         logger.info("🔧 正在初始化组件...")
-        
-        # 初始化 API 客户端（优先使用）
-        from src.spider.api_client import PLAPApiClient
-        self.api_client = PLAPApiClient(self.config)
         
         self.spider = PLAPSpider(self.config)
         self.attachment_handler = AttachmentHandler(self.config)
@@ -231,12 +226,12 @@ class TenderCopilot:
             
             # 步骤6: 分析结果分层（推荐+备选）
             logger.info("🎯 步骤 6/7: 结果分层（推荐项目 + 备选项目）")
-            recommended = [p for p in filtered if p['feasibility']['total'] >= 65]  # 推荐项目（与报告阈值一致）
-            alternatives = [p for p in filtered if p['feasibility']['total'] < 65]   # 备选项目
+            recommended = [p for p in filtered if p.feasibility['total'] >= 65]  # 推荐项目（与报告阈值一致）
+            alternatives = [p for p in filtered if p.feasibility['total'] < 65]   # 备选项目
             
             logger.info(f"  ✅ 推荐项目: {len(recommended)} 个（评分≥65分）")
             if len(recommended) > 0:
-                excellent = sum(1 for p in recommended if p['feasibility']['total'] >= 80)
+                excellent = sum(1 for p in recommended if p.feasibility['total'] >= 80)
                 good = len(recommended) - excellent
                 if excellent > 0:
                     logger.info(f"     - 优秀: {excellent} 个（≥80分）")
@@ -252,8 +247,8 @@ class TenderCopilot:
                 'total_crawled': len(all_announcements),
                 'total_matched': len(filtered),
                 'recommended': len(recommended),
-                'excellent': sum(1 for p in recommended if p['feasibility']['total'] >= 80),
-                'good': sum(1 for p in recommended if 65 <= p['feasibility']['total'] < 80),
+                'excellent': sum(1 for p in recommended if p.feasibility['total'] >= 80),
+                'good': sum(1 for p in recommended if 65 <= p.feasibility['total'] < 80),
                 'alternatives': len(alternatives)
             }
             
@@ -376,34 +371,30 @@ class TenderCopilot:
             更新后的 project 字典
         """
         i, total, project = project_info
-        ann = project['announcement']
-        direction_id = project['matched_direction_id']
+        direction_id = project.matched_direction_id
         direction_config = self.config['business_directions'][direction_id]
         deep_analysis_enabled = self.config.get('deep_analysis', {}).get('enabled', True)
         
-        logger.info(f"  📊 [{i}/{total}] 分析: {ann['title'][:40]}...")
+        logger.info(f"  📊 [{i}/{total}] 分析: {(project.title or '')[:40]}...")
         
         try:
             # 1. 获取详情内容
             detail_content = ''
-            if not ann.get('content'):
+            if not project.content_raw:
                 try:
-                    detail = self.spider.fetch_detail(ann['url'])
-                    if detail:
-                        ann['content'] = detail.get('content', '')
-                        ann['attachments'] = detail.get('attachments', [])
-                        detail_content = ann['content']
+                    self.spider.fetch_detail(project)
+                    detail_content = project.content_raw
                 except Exception as e:
                     logger.warning(f"     ⚠️ 获取详情失败: {e}")
             else:
-                detail_content = ann.get('content', '')
+                detail_content = project.content_raw
             
             # 2. 内容相关度分析
             content_analysis = None
             if deep_analysis_enabled and self.config.get('deep_analysis', {}).get('analyze_content', True):
                 try:
                     content_analysis = self.content_analyzer.analyze_relevance(
-                        ann,
+                        project,
                         direction_config,
                         detail_content
                     )
@@ -411,12 +402,12 @@ class TenderCopilot:
                 except Exception as e:
                     logger.warning(f"     ⚠️ 内容分析失败: {e}")
             
-            # 3. AI提取结构化信息
+            # 3. AI提取结构化信息（精准 4 要素 + 评分，直接赋给 project）
             ai_extracted = None
             if self.analyzer and deep_analysis_enabled and self.config.get('deep_analysis', {}).get('extract_ai', True):
                 try:
-                    content = f"{ann['title']}\n\n{detail_content}"
-                    ai_extracted = self.analyzer.extract(content[:12000])
+                    content = f"{project.title}\n\n{detail_content}"
+                    ai_extracted = self.analyzer.extract(content[:12000], item=project)
                     logger.debug(f"     AI提取: 完成")
                 except Exception as e:
                     logger.warning(f"     ⚠️ AI提取失败: {e}")
@@ -424,7 +415,7 @@ class TenderCopilot:
             # 4. 附件分析
             attachment_analysis = None
             if deep_analysis_enabled and self.config.get('deep_analysis', {}).get('analyze_attachments', True):
-                attachments = ann.get('attachments', [])
+                attachments = project.attachments or []
                 if attachments:
                     try:
                         # 下载第一个附件并分析
@@ -443,25 +434,25 @@ class TenderCopilot:
             
             # 5. 综合评分
             feasibility = self.scorer.calculate(
-                ann,
-                project['match_results'],
-                project['location_result'],
+                project,
+                project.match_results,
+                project.location_result,
                 content_analysis=content_analysis,
                 ai_extracted=ai_extracted,
                 attachment_analysis=attachment_analysis,
                 direction_id=direction_id
             )
             
-            # 保存结果
-            project['feasibility'] = feasibility
-            project['content_analysis'] = content_analysis
-            project['ai_extracted'] = ai_extracted
-            project['attachment_analysis'] = attachment_analysis
+            # 保存结果到 TenderItem
+            project.feasibility = feasibility
+            project.content_analysis = content_analysis
+            project.ai_extracted = ai_extracted
+            project.attachment_analysis = attachment_analysis
             
             # 保存到数据库
-            self.db.save_filtered_project(ann['id'], project['match_results'], feasibility)
+            self.db.save_filtered_project(project.project_id, project.match_results, feasibility)
             if ai_extracted:
-                self.db.save_analysis_result(ann['id'], ai_extracted, 0.8)
+                self.db.save_analysis_result(project.project_id, ai_extracted, 0.8)
 
             # 高分项目加入追踪名单（智能追踪：后续更正/流标等只提醒已关注项目）
             threshold = (
@@ -479,15 +470,14 @@ class TenderCopilot:
                 project_name = (ai_extracted or {}).get("project_name") if ai_extracted else None
                 if not project_code and not project_name:
                     from src.utils.project_fingerprint import extract_project_refs_from_content
-                    content = ann.get("content") or ""
-                    refs = extract_project_refs_from_content(content)
+                    refs = extract_project_refs_from_content(project.content_raw or "")
                     if refs:
                         project_code, project_name = refs[0][0] or "", refs[0][1] or ""
                 if project_code or project_name:
                     n = self.db.add_interested_project(
                         project_code=project_code,
                         project_name=project_name,
-                        source_announcement_id=ann["id"],
+                        source_announcement_id=project.project_id,
                         feasibility_score=feasibility["total"],
                     )
                     if n > 0:
@@ -504,6 +494,15 @@ class TenderCopilot:
             
         except Exception as e:
             logger.error(f"     ❌ 分析失败: {e}")
+            # 兜底护盾：强行塞入默认 feasibility
+            project.feasibility = {
+                'total': 60,
+                'level': '及格',
+                'reason': 'AI分析失败或超时，给予默认及格分以保证流程继续',
+                'breakdown': {},
+                'passes_filter': True,
+                'time_score_details': {},
+            }
             return project
     
     def deep_analyze_projects(self, projects):

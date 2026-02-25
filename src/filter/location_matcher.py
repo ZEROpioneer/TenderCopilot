@@ -1,6 +1,10 @@
 """地域匹配器"""
 
 from loguru import logger
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class LocationMatcher:
@@ -12,7 +16,7 @@ class LocationMatcher:
     NORTHEAST = ['吉林省', '吉林', '黑龙江省', '黑龙江', '长春', '哈尔滨', '沈阳']
     NORTH_CHINA = ['河北省', '河北', '内蒙古', '石家庄', '呼和浩特']
     
-    def match(self, announcement, direction_id, direction_config):
+    def match(self, item: "TenderItem", direction_id: str, direction_config: dict) -> dict:
         """检查地域匹配（根据业务类别区分策略）
         
         策略：
@@ -33,7 +37,7 @@ class LocationMatcher:
         location_bonus = direction_config.get('location_bonus', False)
         
         # 提取文本
-        text = f"{announcement['title']} {announcement.get('content', '')} {announcement.get('summary', '')} {announcement.get('location', '')}"
+        text = f"{item.title or ''} {item.content_raw or ''} {item.summary or ''} {item.location or ''}"
         
         # 识别地域
         in_liaoning = any(keyword in text for keyword in self.LIAONING)

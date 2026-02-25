@@ -3,8 +3,11 @@
 """
 
 from loguru import logger
-from typing import Dict, List
+from typing import Dict, List, TYPE_CHECKING
 import re
+
+if TYPE_CHECKING:
+    from src.schema import TenderItem
 
 
 class ContentAnalyzer:
@@ -21,7 +24,7 @@ class ContentAnalyzer:
     
     def analyze_relevance(
         self,
-        announcement: Dict,
+        item: "TenderItem",
         direction: Dict,
         detail_content: str = ''
     ) -> Dict:
@@ -34,7 +37,7 @@ class ContentAnalyzer:
         4. 关键词上下文分析
         
         Args:
-            announcement: 公告基本信息
+            item: 招标项目（TenderItem）
             direction: 业务方向配置
             detail_content: 详情页内容（可选）
             
@@ -46,9 +49,9 @@ class ContentAnalyzer:
                 'density': 0-1.0  # 关键词密度
             }
         """
-        title = announcement.get('title', '')
-        summary = announcement.get('summary', '')
-        content = detail_content or announcement.get('content', '')
+        title = item.title or ''
+        summary = item.summary or ''
+        content = detail_content or item.content_raw or ''
         
         # 获取业务方向关键词
         keywords_include = direction.get('keywords_include', [])

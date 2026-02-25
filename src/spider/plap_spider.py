@@ -6,7 +6,9 @@ import time
 import random
 import hashlib
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
+
+from src.schema import TenderItem
 
 
 class PLAPSpider:
@@ -409,31 +411,39 @@ class PLAPSpider:
                     # 使用当前日期
                     date_text = datetime.now().strftime('%Y-%m-%d')
             
-            return {
+            crawl_dict = {
                 'id': announcement_id,
                 'title': title,
                 'url': url,
                 'pub_date': date_text,
-                'publish_date': date_text,  # 统一字段名
+                'publish_date': date_text,
                 'notice_type_raw': notice_type,
                 'location': location,
                 'summary': '',
                 'crawled_at': datetime.now().isoformat()
             }
+            return TenderItem.from_crawl_dict(crawl_dict)
             
         except Exception as e:
             logger.debug(f"解析列表项失败: {e}")
             return None
     
-    def fetch_detail(self, url):
-        """爬取公告详情"""
+    def fetch_detail(self, item: Union[TenderItem, Dict[str, Any]]) -> Union[TenderItem, Dict[str, Any], None]:
+        """爬取公告详情，更新 item 的 content_raw 与 attachments，并返回该对象。
+
+        支持 TenderItem（新）或 dict（兼容旧调用方）。若传入 TenderItem，则原地更新并返回；
+        若传入 dict，则返回 {'content': ..., 'attachments': ...} 以保持向后兼容。
+        """
+        url = item.url if isinstance(item, TenderItem) else item.get('url', '')
+        if not url:
+            return item if isinstance(item, TenderItem) else {'content': '', 'attachments': []}
+
         logger.debug(f"  🔍 爬取详情: {url[:60]}...")
         
         try:
             self.page.get(url)
-            time.sleep(self.wait_page_refresh)  # 可配置的等待时间
+            time.sleep(self.wait_page_refresh)
             
-            # 智能提取内容 - 尝试多种选择器
             content = ''
             selectors = [
                 'css:.content',
@@ -451,15 +461,13 @@ class PLAPSpider:
                 try:
                     content_ele = self.page.ele(selector, timeout=0.5)
                     if content_ele:
-                        # 获取文本内容（去除HTML标签）
                         content = content_ele.text
-                        if len(content) > 50:  # 确保有实质内容
+                        if len(content) > 50:
                             logger.debug(f"  ✅ 使用选择器: {selector}, 内容长度: {len(content)}")
                             break
                 except:
                     continue
             
-            # 如果所有选择器都失败，尝试获取body的文本
             if not content or len(content) < 50:
                 try:
                     body = self.page.ele('tag:body', timeout=1)
@@ -469,16 +477,20 @@ class PLAPSpider:
                 except:
                     logger.warning(f"  ⚠️ 无法提取详情内容")
             
-            # 提取附件
             attachments = self._extract_attachments()
             
-            return {
-                'content': content,
-                'attachments': attachments
-            }
+            if isinstance(item, TenderItem):
+                item.content_raw = content or ''
+                item.attachments = attachments or []
+                return item
+            return {'content': content or '', 'attachments': attachments or []}
             
         except Exception as e:
             logger.warning(f"  ❌ 爬取详情失败: {e}")
+            if isinstance(item, TenderItem):
+                item.content_raw = ''
+                item.attachments = []
+                return item
             return {'content': '', 'attachments': []}
     
     def _extract_attachments(self):
@@ -817,58 +829,6 @@ class PLAPSpider:
             return None
         except:
             return None
-    
-    def fetch_by_filters(
-        self,
-        date_range=None,
-        notice_types=None,
-        regions=None,
-        max_results=50,
-        use_api=True
-    ):
-        """使用筛选条件爬取公告
-        
-        Args:
-            date_range: 日期范围 (start_date, end_date)
-            notice_types: 公告类型列表
-            regions: 地区列表
-            max_results: 最大结果数
-            use_api: 是否使用 API（推荐）
-            
-        Returns:
-            公告列表
-        """
-        logger.info("🎯 开始使用筛选条件爬取公告")
-        
-        if use_api:
-            # 使用 API 客户端（推荐方式）
-            from .api_client import PLAPApiClient
-            
-            try:
-                api_client = PLAPApiClient(self.config)
-                announcements = api_client.fetch_announcements(
-                    date_range=date_range,
-                    notice_types=notice_types,
-                    regions=regions,
-                    max_results=max_results
-                )
-                api_client.close()
-                
-                # 如果 API 返回空结果，尝试降级
-                if not announcements:
-                    logger.warning("⚠️ API 返回空结果，切换到传统爬取模式")
-                    use_api = False
-                else:
-                    return announcements
-                    
-            except Exception as e:
-                logger.error(f"❌ API 爬取失败: {e}")
-                logger.warning("⚠️ 切换到传统爬取模式")
-                use_api = False
-        
-        # 降级到传统爬取方式
-        logger.info("🔄 使用传统爬取模式")
-        return self.fetch_announcements()
     
     def close(self) -> None:
         """关闭浏览器"""
