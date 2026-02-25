@@ -151,11 +151,21 @@ class FilterManager:
         return self._strategy_a_new_opportunity(announcement)
 
     def process(self, announcements: List[Dict]) -> List[Dict]:
-        """批量处理公告，返回通过筛选的 project 列表。"""
+        """批量处理公告，返回通过筛选的 project 列表。
+        使用 url 或 id 去重，确保同一公告（多业务方向命中）只出现一次。
+        """
         filtered = []
+        seen_keys: set = set()
         for ann in announcements:
             result = self.process_one(ann)
             if result:
+                key = (ann.get("url") or ann.get("id") or "").strip()
+                if not key:
+                    key = f"__id_{ann.get('id', '')}"
+                if key in seen_keys:
+                    logger.debug(f"⏭️ 跳过（内存去重）: {ann.get('title', '')[:50]}...")
+                    continue
+                seen_keys.add(key)
                 self.db.save_announcement(ann)
                 filtered.append(result)
         return filtered

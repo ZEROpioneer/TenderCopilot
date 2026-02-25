@@ -156,6 +156,7 @@ class PLAPSpider:
         
         all_announcements = []
         consecutive_exists = 0
+        seen_in_run = set()  # 本次运行内去重（id 或 url），避免同页/跨页重复
         
         try:
             # ✅ 使用重试机制加载页面
@@ -198,21 +199,26 @@ class PLAPSpider:
                         if not announcement:
                             continue
                         
+                        # 本次运行内去重（同页或跨页重复，不触发连续重复停止）
+                        dedup_key = announcement.get("url") or announcement.get("id", "")
+                        if dedup_key and dedup_key in seen_in_run:
+                            page_duplicate += 1
+                            continue
                         # 数据库去重检查
                         if db_manager and db_manager.exists(announcement['id']):
                             consecutive_exists += 1
                             page_duplicate += 1
-                            
-                            # 连续重复达到阈值，停止爬取
                             if consecutive_exists >= max_consecutive_exists:
                                 logger.info(f"   ⏹️ 连续{consecutive_exists}条重复，停止爬取")
                                 should_stop = True
                                 break
-                        else:
-                            consecutive_exists = 0  # 重置计数器
-                            page_new += 1
-                            all_announcements.append(announcement)
-                            logger.debug(f"   ✅ [{len(all_announcements)}] {announcement['title'][:50]}...")
+                            continue
+                        consecutive_exists = 0  # 重置计数器
+                        if dedup_key:
+                            seen_in_run.add(dedup_key)
+                        page_new += 1
+                        all_announcements.append(announcement)
+                        logger.debug(f"   ✅ [{len(all_announcements)}] {announcement['title'][:50]}...")
                         
                     except Exception as e:
                         logger.warning(f"   ⚠️ 解析公告项失败: {e}")

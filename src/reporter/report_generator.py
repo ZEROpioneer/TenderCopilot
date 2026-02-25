@@ -9,12 +9,26 @@ class MarkdownReporter:
     """Markdown 报告生成器"""
     
     def generate_daily_report(self, filtered_projects, stats):
-        """生成日报（分层展示）"""
+        """生成日报（分层展示）。按 url 或 id 去重，确保同一项目只出现一次。"""
         logger.info("📝 正在生成 Markdown 日报...")
+        
+        # 兜底去重：按 url 或 id 去重，保留首次出现的项目（评分最高）
+        seen = {}
+        unique_projects = []
+        for p in filtered_projects:
+            ann = p.get("announcement") or {}
+            key = (ann.get("url") or ann.get("id") or "").strip() or f"__id_{ann.get('id', '')}"
+            if key in seen:
+                logger.debug(f"⏭️ 报告去重跳过: {ann.get('title', '')[:50]}...")
+                continue
+            seen[key] = True
+            unique_projects.append(p)
+        if len(unique_projects) < len(filtered_projects):
+            logger.info(f"📋 报告去重: {len(filtered_projects)} → {len(unique_projects)} 条")
         
         # 按综合评分排序
         projects = sorted(
-            filtered_projects,
+            unique_projects,
             key=lambda x: x["feasibility"]["total"],
             reverse=True,
         )

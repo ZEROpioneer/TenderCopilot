@@ -203,10 +203,18 @@ class DatabaseManager:
             return False
     
     def save_filtered_project(self, announcement_id, match_results, feasibility):
-        """保存筛选项目"""
+        """保存筛选项目。同一公告当日已存在则跳过，避免重复插入。"""
         cursor = self.conn.cursor()
         
         try:
+            # 去重：当日已存在该 announcement_id 则跳过
+            cursor.execute("""
+                SELECT 1 FROM filtered_projects
+                WHERE announcement_id = ? AND date(filtered_at) = date('now', 'localtime')
+            """, (announcement_id,))
+            if cursor.fetchone():
+                logger.debug(f"⏭️ 跳过重复写入 filtered_projects: {announcement_id}")
+                return True
             cursor.execute("""
                 INSERT INTO filtered_projects 
                 (announcement_id, matched_directions, feasibility_score, feasibility_level)
