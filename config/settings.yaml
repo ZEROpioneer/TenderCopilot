@@ -34,7 +34,7 @@ crawl_strategy:
   max_total_items: 300
   warn_threshold: 200
 scheduler:
-  enabled: true
+  enabled: false
   times:
   - 09:00
   - '11:55'
@@ -92,7 +92,6 @@ announcement_filter:
     - 中标公告
     - 成交公告
     - 结果公示
-  # 智能项目追踪：更正/流标/废标/变更类只关注已高分项目
   smart_track:
     enabled: true
     score_threshold: 60

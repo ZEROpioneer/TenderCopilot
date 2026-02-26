@@ -66,6 +66,10 @@ class TenderItem:
     doc_deadline: str = ""               # 招标文件获取/报名截止时间
     bid_deadline: str = ""               # 开标/递交投标文件时间
     budget_info: str = ""                # 预算或最高限价
+    bid_location: str = ""               # 开标地点
+    contact_info: str = ""               # 采购方/代理联系人及电话
+    doc_claim_method: str = ""           # 招标文件申领方式
+    bid_method: str = ""                 # 开标方式 (线下/线上等)
     ai_score: float = 0.0                # AI 推荐度评分 0-100（用于展示）
 
     # ---------- 兼容属性 ----------

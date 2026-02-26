@@ -60,6 +60,25 @@ class ConfigManager:
             notifications = self._load_yaml('notifications.yaml')
             self._config.update(notifications)
             
+            # 3.5 加载评分配置（可选，用于动态规则引擎）
+            try:
+                scoring = self._load_yaml('scoring_config.yaml')
+                if scoring:
+                    self._config['scoring_config'] = scoring
+            except FileNotFoundError:
+                self._config['scoring_config'] = {
+                    'weights': {
+                        'title_keyword': 30,
+                        'content_keyword': 15,
+                        'location_match': 20,
+                        'budget_high': 10,
+                        'time_urgent': -10,
+                    },
+                    'budget_high_threshold_wan': 50,
+                    'time_urgent_threshold_days': 3,
+                    'custom_rules': [],
+                }
+            
             # 4. 尝试加载可选配置（向后兼容）
             # 确保 announcement_filter.smart_track 有默认值
             af = self._config.get('announcement_filter', {})

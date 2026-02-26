@@ -18,16 +18,19 @@ class Deduplicator:
         """
         self.db = db
     
-    def is_duplicate(self, item: "TenderItem") -> bool:
+    def is_duplicate(self, item: "TenderItem", force_mode: bool = False) -> bool:
         """检查是否重复（完整检查）
         
         Args:
             item: 招标项目（TenderItem）
+            force_mode: 若为 True，强制放行（假装全新，用于实验室干跑测试）
             
         Returns:
             True: 已存在（重复）
             False: 不存在（新公告）
         """
+        if force_mode:
+            return False
         return self.db.exists(item.project_id)
     
     def is_duplicate_fast(self, announcement_id: str) -> bool:

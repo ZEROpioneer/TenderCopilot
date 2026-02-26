@@ -1,11 +1,126 @@
-"""可行性评分器（多维度评分）"""
+"""可行性评分器（多维度评分，支持动态规则引擎）"""
 
+import re
 from datetime import datetime
 from loguru import logger
 from typing import Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.schema import TenderItem
+
+
+def _get_scoring_weights(config: Dict) -> Dict[str, int]:
+    """从配置读取评分权重，缺失时使用默认值。"""
+    defaults = {
+        "title_keyword": 30,
+        "content_keyword": 15,
+        "location_match": 20,
+        "budget_high": 10,
+        "time_urgent": -10,
+    }
+    weights = config.get("scoring_config", {}).get("weights", {})
+    return {k: weights.get(k, v) for k, v in defaults.items()}
+
+
+# 自定义规则字段映射：配置中的 field 值 -> 实际数据来源
+CUSTOM_RULE_FIELD_MAP = {
+    "title": lambda item, ai: (item.title or ""),
+    "content": lambda item, ai: f"{item.content_raw or ''} {item.summary or ''}",
+    "qualifications": lambda item, ai: (ai or {}).get("confidentiality_req") or getattr(item, "confidentiality_req", "") or "",
+    "budget": lambda item, ai: (ai or {}).get("budget_info") or (ai or {}).get("budget") or getattr(item, "budget", None) or "",
+    "location": lambda item, ai: item.location or "",
+}
+
+
+def _extract_field_value(item: "TenderItem", ai_extracted: Optional[Dict], field: str) -> str:
+    """根据 rule['field'] 从 item 中提取对应值。"""
+    fn = CUSTOM_RULE_FIELD_MAP.get(field)
+    if fn:
+        return str(fn(item, ai_extracted) or "").strip()
+    # 尝试从 item 或 ai_extracted 直接取属性
+    val = getattr(item, field, None) or (ai_extracted or {}).get(field)
+    return str(val or "").strip()
+
+
+def _split_keywords(value: str) -> list:
+    """智能切词：将包含中英文逗号、顿号、空格的字符串切分为关键词列表。"""
+    if not value or not str(value).strip():
+        return []
+    return [k.strip() for k in re.split(r"[,，、\s]+", str(value)) if k.strip()]
+
+
+def _evaluate_custom_rule(
+    item: "TenderItem",
+    ai_extracted: Optional[Dict],
+    rule: Dict,
+) -> bool:
+    """判断自定义规则是否命中。支持多态操作符与智能切词。"""
+    field = rule.get("field", "")
+    operator = rule.get("operator", "contains_any")
+    value = rule.get("value", "")
+    if not field:
+        return False
+    item_value = _extract_field_value(item, ai_extracted, field)
+    value_str = str(value or "").strip()
+
+    # 兼容旧配置：contains -> contains_any, not_contains -> not_contains_any
+    if operator == "contains":
+        operator = "contains_any"
+    if operator == "not_contains":
+        operator = "not_contains_any"
+
+    # 文本类操作符：智能切词
+    keywords = _split_keywords(value_str)
+    if not keywords:
+        keywords = [value_str] if value_str else []
+
+    if operator == "contains_any":
+        return any(kw in item_value for kw in keywords)
+    if operator == "contains_all":
+        return all(kw in item_value for kw in keywords)
+    if operator == "not_contains_any":
+        return not any(kw in item_value for kw in keywords)
+    if operator == "equals":
+        return item_value.strip() == value_str
+
+    if operator == "greater_than":
+        try:
+            cmp_val = float(value_str)
+            budget_wan = _parse_budget_wan(item_value) if field == "budget" else None
+            if budget_wan is not None:
+                return budget_wan > cmp_val
+            return float(item_value.replace(",", "").replace(" ", "")) > cmp_val
+        except (ValueError, TypeError):
+            return False
+    if operator == "less_than":
+        try:
+            cmp_val = float(value_str)
+            budget_wan = _parse_budget_wan(item_value) if field == "budget" else None
+            if budget_wan is not None:
+                return budget_wan < cmp_val
+            return float(item_value.replace(",", "").replace(" ", "")) < cmp_val
+        except (ValueError, TypeError):
+            return False
+    return False
+
+
+def _parse_budget_wan(text: str) -> Optional[float]:
+    """从预算文本中解析金额（万元）。支持「50万」「500000元」「50万元」等格式。"""
+    if not text or not str(text).strip():
+        return None
+    text = str(text).strip()
+    m = re.search(r"([\d.]+)\s*[万千]?元?", text)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+        if "万" in text or "万千" in text:
+            return val
+        if "元" in text and "万" not in text:
+            return val / 10000
+        return val
+    except (ValueError, TypeError):
+        return None
 
 
 class FeasibilityScorer:
@@ -30,90 +145,140 @@ class FeasibilityScorer:
         attachment_analysis: Optional[Dict] = None,
         direction_id: str = None
     ) -> Dict:
-        """计算综合评分（0-100）
+        """计算综合评分（0-100），使用可配置的动态规则引擎。
         
-        评分维度（根据类别调整）：
-        1. 关键词匹配 (20分)
-        2. 内容相关度 (25分)
-        3. AI提取完整性 (20分)
-        4. 附件质量 (15分)
-        5. 时间综合评分 (15分) - 优化
-           - 发布新鲜度 (5分): 越新越好
-           - 截止充足度 (10分): 距离截止时间是否充足
-        
-        地域加分（不计入总分，额外加分）：
-        - 文化氛围类 + 大连市：+5分
-        - 其他类别靠近辽宁省：+1~3分
-        
-        Args:
-            announcement: 公告信息
-            match_results: 关键词匹配结果
-            location_result: 地域匹配结果
-            content_analysis: 内容分析结果（可选）
-            ai_extracted: AI提取结果（可选）
-            attachment_analysis: 附件分析结果（可选）
-            direction_id: 业务方向ID
-            
-        Returns:
-            评分结果字典
+        评分维度（从 scoring_config.yaml 读取权重）：
+        - title_keyword: 标题命中关键词
+        - content_keyword: 正文命中关键词
+        - location_match: 命中优先地域
+        - budget_high: 高预算加分（>50万）
+        - time_urgent: 时间紧迫扣分（距获取文件截止不足3天）
         """
-        # 1. 业务方向匹配分（0-60）
-        # 使用 KeywordMatcher 的 score（0-1）线性映射到 0-60
+        weights = _get_scoring_weights(self.config)
+        budget_threshold = self.config.get("scoring_config", {}).get("budget_high_threshold_wan", 50)
+        time_urgent_days = self.config.get("scoring_config", {}).get("time_urgent_threshold_days", 3)
+
         best_match = max(match_results.values(), key=lambda x: x['score'])
-        direction_score_raw = best_match['score']  # 0-1
-        direction_score = direction_score_raw * 60
+        matched_kw = best_match.get("matched_keywords", [])
+        title = item.title or ""
+        content = (item.content_raw or "") + " " + (item.summary or "")
 
-        # 针对特定方向（如院线电影等）后续可以在这里加一点点系数
-        # 暂时保持统一，避免过度偏置
+        score_breakdown = []
+        total = 0.0
 
-        # 2. 基础内容相关度（0-20）
-        if content_analysis:
-            # content_analysis['score'] 是 0-100，线性映射到 0-20
-            content_score = (content_analysis.get("score", 0) / 100) * 20
-        else:
-            # 没有内容分析时给一个中等保守分，避免被打成很低分
-            content_score = 10
+        # 1. 标题命中关键词
+        title_matched = [kw for kw in matched_kw if kw in title]
+        if title_matched:
+            pts = weights["title_keyword"]
+            total += pts
+            kw_str = ", ".join(title_matched[:5])
+            if len(title_matched) > 5:
+                kw_str += f" 等{len(title_matched)}个"
+            score_breakdown.append({"rule": f"标题命中关键词 [{kw_str}]", "points": pts})
 
-        # 3. 时间评分（0-20），只要未过期就给中高分，主要用于排序
+        # 2. 正文命中关键词
+        content_only = [kw for kw in matched_kw if kw in content and kw not in title]
+        if content_only:
+            pts = weights["content_keyword"]
+            total += pts
+            kw_str = ", ".join(content_only[:5])
+            if len(content_only) > 5:
+                kw_str += f" 等{len(content_only)}个"
+            score_breakdown.append({"rule": f"正文命中关键词 [{kw_str}]", "points": pts})
+
+        # 若无标题/正文命中，保留基础关键词分（兼容）
+        if not title_matched and not content_only and matched_kw:
+            pts = weights["title_keyword"]
+            total += pts
+            kw_str = ", ".join(matched_kw[:5])
+            score_breakdown.append({"rule": f"关键词匹配 [{kw_str}]", "points": pts})
+
+        # 3. 地域加分（命中优先地域）
+        if location_result.get("bonus_score", 0) > 0 or location_result.get("is_priority"):
+            pts = weights["location_match"]
+            total += pts
+            loc_reason = location_result.get("reason", "优先地域")
+            score_breakdown.append({"rule": f"地域匹配 [{loc_reason}]", "points": pts})
+
+        # 4. 高预算加分
+        budget_text = (
+            (ai_extracted or {}).get("budget_info")
+            or (ai_extracted or {}).get("budget")
+            or getattr(item, "budget", None)
+            or ""
+        )
+        budget_wan = _parse_budget_wan(str(budget_text))
+        if budget_wan is not None and budget_wan >= budget_threshold:
+            pts = weights["budget_high"]
+            total += pts
+            score_breakdown.append({"rule": f"高预算加分 (≥{budget_threshold}万)", "points": pts})
+
+        # 5. 时间紧迫扣分
         time_score_result = self._calculate_time_score(item, ai_extracted)
-        time_total = time_score_result["total"]  # 仍然是 0-15
-        # 轻微放大到 0-20 区间，避免比重过小
-        time_score = min(time_total / 15 * 20, 20) if time_total > 0 else 0
+        doc_deadline_str = (
+            (ai_extracted or {}).get("doc_deadline")
+            or getattr(item, "doc_deadline", None)
+            or item.deadline
+        )
+        days_left = self._calculate_days_left(str(doc_deadline_str or "")) if doc_deadline_str else 999
+        if 0 <= days_left < time_urgent_days:
+            pts = weights["time_urgent"]
+            total += pts
+            score_breakdown.append({"rule": f"时间紧迫（距获取文件截止不足{time_urgent_days}天）", "points": pts})
 
-        # 4. 地域加分（0-5，额外）
-        location_bonus = location_result.get("bonus_score", 0)
-        # 控制在 0-5 之间，防止影响过大
-        location_bonus = max(0, min(location_bonus, 5))
+        # 6. 内容相关度（补充）
+        if content_analysis:
+            content_score = (content_analysis.get("score", 0) / 100) * 15
+        else:
+            content_score = 5
+        total += content_score
+        score_breakdown.append({"rule": "内容相关度", "points": round(content_score, 1)})
 
-        # 5. AI / 附件仅用于标签，不直接计入总分
+        # 7. 时间评分（新鲜度+截止充足度）
+        time_total = time_score_result["total"]
+        time_score = min(time_total / 15 * 10, 10) if time_total > 0 else 0
+        total += time_score
+        score_breakdown.append({"rule": "时间评分（新鲜度+截止充足度）", "points": round(time_score, 1)})
+
+        # 8. 自定义规则（支持完全自定义的动态规则引擎）
+        custom_rules = self.config.get("scoring_config", {}).get("custom_rules") or []
+        for rule in custom_rules:
+            if not isinstance(rule, dict):
+                continue
+            name = rule.get("name", "自定义规则")
+            score_val = rule.get("score", 0)
+            try:
+                score_val = int(score_val)
+            except (TypeError, ValueError):
+                score_val = 0
+            if _evaluate_custom_rule(item, ai_extracted, rule):
+                total += score_val
+                score_breakdown.append({"rule": f"命中自定义规则 [{name}]", "points": score_val})
+
+        final_total = max(-100, min(100, round(total, 1)))
+        score_breakdown.append({"rule": "🏆 总计", "points": final_total})
+
         ai_completeness = self._calculate_ai_completeness(ai_extracted) if ai_extracted else 0
-        attachment_quality_score = 0
-        if attachment_analysis:
-            attachment_quality_score = attachment_analysis.get("relevance_score", 0)
+        attachment_quality_score = attachment_analysis.get("relevance_score", 0) if attachment_analysis else 0
 
-        # 6. 计算总分（方向 + 内容 + 时间 为主干）
-        base_total = direction_score + content_score + time_score
-        final_total = min(base_total + location_bonus, 100)
-
-        # 构造细分结果
         scores = {
-            "direction_match": direction_score,
+            "direction_match": total,
             "content_relevance": content_score,
             "time": time_score,
-            "location_bonus": location_bonus,
-            # 以下仅作为参考标签，不参与 base_total
-            "ai_completeness_ratio": ai_completeness,          # 0-1
-            "attachment_relevance": attachment_quality_score,  # 0-100 原始分
+            "location_bonus": weights["location_match"] if (location_result.get("bonus_score", 0) > 0 or location_result.get("is_priority")) else 0,
+            "ai_completeness_ratio": ai_completeness,
+            "attachment_relevance": attachment_quality_score,
         }
 
         return {
-            "total": round(final_total, 1),
-            "base_score": round(base_total, 1),
+            "total": final_total,
+            "base_score": round(total, 1),
             "breakdown": {k: round(v, 1) for k, v in scores.items()},
+            "score_breakdown": score_breakdown,
             "level": self._get_level(final_total),
             "passes_filter": self._check_second_filter(
                 final_total,
-                direction_score,
+                total,
                 time_score_result.get("deadline_adequacy", 0),
             ),
             "time_score_details": time_score_result.get("details", {}),

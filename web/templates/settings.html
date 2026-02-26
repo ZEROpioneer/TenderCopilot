@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}配置管理 · TenderCopilot{% endblock %}
 {% block head_extra %}
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
 {% endblock %}
 {% block content %}
@@ -25,6 +26,8 @@
                 :class="configSubTab==='notify' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">通知</button>
         <button type="button" @click="configSubTab='schedule'" class="px-3 py-2 rounded-md text-sm font-medium transition"
                 :class="configSubTab==='schedule' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">定时与爬虫</button>
+        <button type="button" @click="configSubTab='scoring'" class="px-3 py-2 rounded-md text-sm font-medium transition"
+                :class="configSubTab==='scoring' ? 'bg-gray-700 text-blue-400' : 'text-gray-400 hover:bg-gray-800'">⚖️ 评分权重</button>
       </div>
     </template>
 
@@ -168,34 +171,194 @@
       </div>
 
       <!-- 定时与爬虫 -->
-      <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='schedule'">
-        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">定时运行</h2>
-        <label class="flex items-center gap-2 text-gray-400 cursor-pointer mb-3">
-          <input type="checkbox" x-model="config.settings.scheduler.enabled" class="rounded border-gray-600 bg-gray-700 text-blue-500" /> 启用定时任务
-        </label>
-        <label class="block text-sm text-gray-400 mb-1">执行时间（每行 HH:mm）</label>
-        <textarea x-model="schedulerTimesStr" rows="4" placeholder="09:00&#10;11:55" class="w-full max-w-md bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-3"></textarea>
-        <label class="block text-sm text-gray-400 mb-1">时区</label>
-        <input type="text" x-model="config.settings.scheduler.timezone" placeholder="Asia/Shanghai" class="w-40 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-3" />
-        <label class="block text-sm text-gray-400 mb-1">单次最大运行时间（分钟）</label>
-        <input type="number" x-model.number="config.settings.scheduler.max_runtime_minutes" min="1" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 mb-4" />
-        <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">爬虫与评分</h3>
-        <div class="flex gap-4 flex-wrap">
-          <div>
-            <label class="block text-sm text-gray-400 mb-1">min_total_score</label>
-            <input type="number" x-model.number="config.settings.scoring.min_total_score" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+      <div class="space-y-6" x-show="configSubTab==='schedule'">
+        <!-- 卡片一：⏱️ 定时任务调度 -->
+        <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-6 mb-6">
+          <h2 class="text-base font-semibold text-gray-200 mb-1">⏱️ 定时任务调度 (Task Scheduler)</h2>
+          <p class="text-sm text-gray-500 mb-4">控制自动抓取程序的后台运行频率。</p>
+          <label class="flex items-center gap-3 cursor-pointer mb-6">
+            <input type="checkbox" x-model="config.settings.scheduler.enabled" class="rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500/50 w-4 h-4" />
+            <span class="text-sm font-medium" :class="config.settings.scheduler.enabled ? 'text-green-400' : 'text-gray-400'">🟢 启用后台定时任务</span>
+          </label>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1">执行时间 (多行，每行 HH:mm)</label>
+              <textarea x-model="schedulerTimesStr" rows="3" placeholder="09:00&#10;11:55&#10;18:00" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"></textarea>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1">时区 (Timezone)</label>
+              <input type="text" x-model="config.settings.scheduler.timezone" readonly class="w-full max-w-xs bg-gray-700/50 text-gray-500 cursor-not-allowed border border-gray-600/50 rounded-lg px-3 py-2 text-sm" tabindex="-1" />
+              <p class="text-xs text-gray-500 mt-1">默认 Asia/Shanghai，无需更改</p>
+            </div>
           </div>
           <div>
-            <label class="block text-sm text-gray-400 mb-1">max_fetch_details</label>
-            <input type="number" x-model.number="config.settings.spider.max_fetch_details" class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+            <label class="block text-sm font-medium text-gray-400 mb-1">单次最大运行时间 (分钟)</label>
+            <input type="number" x-model.number="config.settings.scheduler.max_runtime_minutes" min="1" class="w-24 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+            <p class="text-xs text-gray-500 mt-1">防止程序卡死，建议设为 30</p>
+          </div>
+        </div>
+
+        <!-- 卡片二：🕷️ 爬虫引擎参数 -->
+        <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-6 mb-6">
+          <h2 class="text-base font-semibold text-gray-200 mb-1">🕷️ 爬虫引擎参数 (Spider Parameters)</h2>
+          <p class="text-sm text-gray-500 mb-4">控制爬虫抓取深度与入库门槛。</p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1">📥 自动入库分数线 (min_total_score)</label>
+              <input type="number" x-model.number="config.settings.scoring.min_total_score" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+              <p class="text-xs text-gray-500 mt-1">低于此分数的项目将被直接拦截，不推送不入库。建议：60</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1">🕸️ 单次最大详情抓取数 (max_fetch_details)</label>
+              <input type="number" x-model.number="config.settings.spider.max_fetch_details" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+              <p class="text-xs text-gray-500 mt-1">防止单次请求量过大被封 IP。建议：50</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="border-t border-gray-700 pt-4">
-        <button type="submit" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition">保存配置</button>
+      <div class="border-t border-gray-700 pt-6 mt-8">
+        <button type="submit" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition">💾 保存配置</button>
       </div>
     </form>
+
+    <!-- ⚖️ 评分权重设置（独立表单，避免嵌套） -->
+    <div class="border border-gray-700 rounded-lg p-4 bg-gray-800" x-show="configSubTab==='scoring'">
+      <form hx-post="/api/config/scoring" hx-target="#scoring-save-result" hx-swap="innerHTML" class="space-y-0">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">⚖️ 评分权重设置 (Scoring Weights)</h2>
+        <p class="text-sm text-gray-500 mb-4">动态规则引擎：调整各维度权重，影响项目可行性评分。</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div class="space-y-2">
+            <label class="block text-sm text-gray-400">标题命中关键词 (title_keyword)</label>
+            <div class="flex items-center gap-3">
+              <input type="range" name="weights[title_keyword]" x-model.number="scoringWeights.title_keyword" min="-50" max="50" step="1"
+                     class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+              <input type="number" name="weights[title_keyword]" x-model.number="scoringWeights.title_keyword" min="-50" max="50"
+                     class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 text-sm text-right" />
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="block text-sm text-gray-400">正文命中关键词 (content_keyword)</label>
+            <div class="flex items-center gap-3">
+              <input type="range" name="weights[content_keyword]" x-model.number="scoringWeights.content_keyword" min="-50" max="50" step="1"
+                     class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+              <input type="number" name="weights[content_keyword]" x-model.number="scoringWeights.content_keyword" min="-50" max="50"
+                     class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 text-sm text-right" />
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="block text-sm text-gray-400">命中优先地域 (location_match)</label>
+            <div class="flex items-center gap-3">
+              <input type="range" name="weights[location_match]" x-model.number="scoringWeights.location_match" min="-50" max="50" step="1"
+                     class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+              <input type="number" name="weights[location_match]" x-model.number="scoringWeights.location_match" min="-50" max="50"
+                     class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 text-sm text-right" />
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="block text-sm text-gray-400">高预算加分 (budget_high, &gt;50万)</label>
+            <div class="flex items-center gap-3">
+              <input type="range" name="weights[budget_high]" x-model.number="scoringWeights.budget_high" min="-50" max="50" step="1"
+                     class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+              <input type="number" name="weights[budget_high]" x-model.number="scoringWeights.budget_high" min="-50" max="50"
+                     class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 text-sm text-right" />
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="block text-sm text-gray-400">时间紧迫扣分 (time_urgent, 不足3天)</label>
+            <div class="flex items-center gap-3">
+              <input type="range" name="weights[time_urgent]" x-model.number="scoringWeights.time_urgent" min="-50" max="10" step="1"
+                     class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-amber-500" />
+              <input type="number" name="weights[time_urgent]" x-model.number="scoringWeights.time_urgent" min="-50" max="10"
+                     class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 text-sm text-right" />
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-4 items-center flex-wrap">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">高预算阈值（万元）</label>
+            <input type="number" name="budget_high_threshold_wan" x-model.number="scoringConfig.budget_high_threshold_wan" min="1" max="10000"
+                   class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">时间紧迫阈值（天）</label>
+            <input type="number" name="time_urgent_threshold_days" x-model.number="scoringConfig.time_urgent_threshold_days" min="1" max="30"
+                   class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100" />
+          </div>
+        </div>
+
+        <!-- 🧩 自定义评分规则 -->
+        <div class="mt-6 pt-6 border-t border-gray-700">
+          <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">🧩 自定义评分规则 (Custom Rules)</h3>
+          <p class="text-sm text-gray-500 mb-3">完全自定义的动态规则：按字段、条件、匹配值加减分。</p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-gray-400 border-b border-gray-600">
+                  <th class="pb-2 pr-2">规则名</th>
+                  <th class="pb-2 pr-2">目标字段</th>
+                  <th class="pb-2 pr-2">判断条件</th>
+                  <th class="pb-2 pr-2">匹配值</th>
+                  <th class="pb-2 pr-2">增减分数</th>
+                  <th class="pb-2 w-16">操作</th>
+                </tr>
+              </thead>
+              <tbody id="custom-rules-tbody">
+                <template x-for="(rule, i) in scoringCustomRules" :key="i">
+                  <tr class="rule-row border-b border-gray-700 hover:bg-gray-700/30">
+                    <td class="py-2 pr-2">
+                      <input type="text" name="rule_name[]" x-model="rule.name" placeholder="规则名"
+                             class="w-full min-w-[100px] bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100" />
+                    </td>
+                    <td class="py-2 pr-2">
+                      <select name="rule_field[]" x-model="rule.field" class="bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 min-w-[120px]">
+                        <option value="title">项目标题</option>
+                        <option value="content">摘要正文</option>
+                        <option value="qualifications">保密资质</option>
+                        <option value="budget">预算金额</option>
+                        <option value="location">地域</option>
+                      </select>
+                    </td>
+                    <td class="py-2 pr-2">
+                      <select name="rule_operator[]" x-model="rule.operator" class="bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 min-w-[180px]">
+                        <option value="contains_any">包含任意词 (空格/逗号/顿号隔开)</option>
+                        <option value="contains_all">包含全部词 (必须同时出现)</option>
+                        <option value="not_contains_any">不包含任意词 (作为排除项)</option>
+                        <option value="equals">完全等于</option>
+                        <option value="greater_than">数值大于</option>
+                        <option value="less_than">数值小于</option>
+                      </select>
+                    </td>
+                    <td class="py-2 pr-2">
+                      <input type="text" name="rule_value[]" x-model="rule.value" placeholder="匹配值"
+                             class="w-full min-w-[80px] bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100" />
+                    </td>
+                    <td class="py-2 pr-2">
+                      <input type="number" name="rule_score[]" x-model.number="rule.score" placeholder="0" min="-100" max="100"
+                             class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-gray-100 text-right" />
+                    </td>
+                    <td class="py-2">
+                      <button type="button" @click="removeCustomRule(i)" class="text-red-400 hover:text-red-300 text-sm" title="删除">🗑️</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <button type="button" @click="addCustomRule()" class="mt-3 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition">
+            ➕ 添加新规则
+          </button>
+
+          <!-- 表单底座：全局保存按钮 -->
+          <div class="mt-8 pt-6 border-t border-gray-700">
+            <button type="submit" class="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-lg transition">
+              💾 保存所有评分与规则
+            </button>
+            <div id="scoring-save-result" class="mt-4"></div>
+          </div>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script>
@@ -204,6 +367,9 @@
         flash: false,
         config: {},
         configSubTab: 'directions',
+        scoringWeights: { title_keyword: 30, content_keyword: 15, location_match: 20, budget_high: 10, time_urgent: -10 },
+        scoringConfig: { budget_high_threshold_wan: 50, time_urgent_threshold_days: 3 },
+        scoringCustomRules: [],
         configError: '',
         envInputs: { CUSTOM_OPENAI_API_KEY: '', WECHAT_WORK_WEBHOOK: '', EMAIL_PASSWORD: '' },
         newDirectionId: '',
@@ -264,7 +430,37 @@
             this.wechatMentionStr = (n.wechat_work.mention_users || []).join(', ');
             this.schedulerTimesStr = (s.scheduler.times || []).join('\n');
             this.config.env_configured = this.config.env_configured || {};
+            this.loadScoringConfig();
           } catch (e) { this.config = {}; }
+        },
+        async loadScoringConfig() {
+          try {
+            const r = await fetch('/api/config/scoring');
+            const d = await r.json();
+            this.scoringWeights = { ...this.scoringWeights, ...(d.weights || {}) };
+            this.scoringConfig.budget_high_threshold_wan = d.budget_high_threshold_wan ?? 50;
+            this.scoringConfig.time_urgent_threshold_days = d.time_urgent_threshold_days ?? 3;
+            const rules = d.custom_rules || [];
+            this.scoringCustomRules = Array.isArray(rules) ? rules.map(r => {
+              const op = r.operator || 'contains_any';
+              const operator = ['contains', 'not_contains'].includes(op)
+                ? (op === 'contains' ? 'contains_any' : 'not_contains_any')
+                : op;
+              return {
+                name: r.name || '',
+                field: r.field || 'title',
+                operator: operator,
+                value: r.value || '',
+                score: typeof r.score === 'number' ? r.score : parseInt(r.score, 10) || 0,
+              };
+            }) : [];
+          } catch (e) { /* use defaults */ }
+        },
+        addCustomRule() {
+          this.scoringCustomRules.push({ name: '', field: 'title', operator: 'contains_any', value: '', score: 0 });
+        },
+        removeCustomRule(i) {
+          this.scoringCustomRules.splice(i, 1);
         },
         addDirection() {
           const id = (this.newDirectionId || '').trim().replace(/\s+/g, '_');

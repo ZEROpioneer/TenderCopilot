@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}追踪雷达 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+{% endblock %}
+{% block content %}
+  <div class="border border-gray-700 rounded-lg p-4 bg-gray-800">
+    <h1 class="text-lg font-semibold text-gray-100 mb-2">🎯 追踪雷达</h1>
+    <p class="text-sm text-gray-500 mb-4">已关注项目集中管理 · 点击「取消关注」可移除</p>
+    <div class="radar-content"
+         hx-get="/api/radar/html"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML">
+      <p class="text-gray-500">加载中...</p>
+    </div>
+  </div>
+{% endblock %}

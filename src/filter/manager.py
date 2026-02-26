@@ -75,10 +75,14 @@ class FilterManager:
             "level": "及格",
             "base_score": 70,
             "reason": "关注项目有更新，给予默认基础分",
+            "score_breakdown": [
+                {"rule": "🔴 关注项目有更新（追踪模式）", "points": 70},
+                {"rule": "🏆 总计", "points": 70},
+            ],
         }
         return item
 
-    def _strategy_a_new_opportunity(self, item: TenderItem) -> Optional[TenderItem]:
+    def _strategy_a_new_opportunity(self, item: TenderItem, force_mode: bool = False) -> Optional[TenderItem]:
         """策略 A：新机会模式。关键词+地域+类型+去重。"""
         match_results = self.keyword_matcher.match(item)
         if not match_results:
@@ -106,7 +110,7 @@ class FilterManager:
             )
             return None
 
-        if self.deduplicator.is_duplicate(item):
+        if self.deduplicator.is_duplicate(item, force_mode=force_mode):
             logger.debug(f"⏭️ 跳过（重复）: {(item.title or '')[:50]}...")
             return None
 
@@ -118,7 +122,7 @@ class FilterManager:
         item.status = "filtered"
         return item
 
-    def process_one(self, item: TenderItem) -> Optional[TenderItem]:
+    def process_one(self, item: TenderItem, force_mode: bool = False) -> Optional[TenderItem]:
         """处理单条公告，返回通过时的 TenderItem（已更新属性），否则 None。
 
         双轨制分流：
@@ -139,16 +143,16 @@ class FilterManager:
             )
             return self._build_tracking_item(item)
 
-        return self._strategy_a_new_opportunity(item)
+        return self._strategy_a_new_opportunity(item, force_mode=force_mode)
 
-    def process(self, items: List[TenderItem]) -> List[TenderItem]:
+    def process(self, items: List[TenderItem], force_mode: bool = False) -> List[TenderItem]:
         """批量处理公告，返回通过筛选的 TenderItem 列表。
         使用 url 或 id 去重，确保同一公告（多业务方向命中）只出现一次。
         """
         filtered: List[TenderItem] = []
         seen_keys: set = set()
         for item in items:
-            result = self.process_one(item)
+            result = self.process_one(item, force_mode=force_mode)
             if result:
                 key = (item.url or item.project_id or "").strip()
                 if not key:

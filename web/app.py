@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from web.api import reports, run as run_api, config as config_api, history, logs as logs_api, intel as intel_api, scheduler as scheduler_api
+from web.api import reports, run as run_api, config as config_api, history, logs as logs_api, intel as intel_api, scheduler as scheduler_api, lab as lab_api, radar as radar_api, stats as stats_api, system as system_api
 
 templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
@@ -42,6 +42,10 @@ app.include_router(history.router, prefix="/api/history", tags=["history"])
 app.include_router(logs_api.router, prefix="/api/logs", tags=["logs"])
 app.include_router(intel_api.router, prefix="/api/intel", tags=["intel"])
 app.include_router(scheduler_api.router, prefix="/api/scheduler", tags=["scheduler"])
+app.include_router(lab_api.router, prefix="/api/lab", tags=["lab"])
+app.include_router(radar_api.router, prefix="/api/radar", tags=["radar"])
+app.include_router(stats_api.router, prefix="/api/stats", tags=["stats"])
+app.include_router(system_api.router, prefix="/api/system", tags=["system"])
 
 # Static files (after routes so /api/* take precedence)
 static_dir = Path(__file__).parent / "static"
@@ -76,3 +80,21 @@ def settings(request: Request):
 def history_page(request: Request):
     """历史报告：日报列表与爬取历史（深色数据表格）。"""
     return templates.TemplateResponse("history.html", {"request": request})
+
+
+@app.get("/intel")
+def intel_monitor(request: Request):
+    """情报监控台：全屏展示最近抓取的招标项目（AI 核心决策信息）。"""
+    return templates.TemplateResponse("intel.html", {"request": request})
+
+
+@app.get("/lab")
+def lab_page(request: Request):
+    """开发者实验室：幽灵测试模式（强制去重、静音推送）。"""
+    return templates.TemplateResponse("lab.html", {"request": request})
+
+
+@app.get("/radar")
+def radar_page(request: Request):
+    """追踪雷达：已关注项目集中管理。"""
+    return templates.TemplateResponse("radar.html", {"request": request})

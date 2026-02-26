@@ -125,7 +125,7 @@ class PLAPSpider:
         logger.error(f"❌ 尝试{max_retries}次后仍然失败")
         return False
     
-    def fetch_announcements(self, max_pages=None, db_manager=None, max_consecutive_exists=5, max_total_items=300, warn_threshold=200):
+    def fetch_announcements(self, max_pages=None, db_manager=None, max_consecutive_exists=5, max_total_items=300, warn_threshold=200, skip_db_dedup=False):
         """爬取招标公告列表（多页增量版本）
         
         停止策略（按优先级）：
@@ -139,6 +139,7 @@ class PLAPSpider:
             max_consecutive_exists: 连续多少条重复后停止（默认5）
             max_total_items: 保护性上限，单次最多爬取条数（默认300）
             warn_threshold: 警告阈值，超过后发出提醒（默认200）
+            skip_db_dedup: 若为 True，跳过数据库去重（实验室 force_mode 用）
             
         Returns:
             公告列表
@@ -206,8 +207,8 @@ class PLAPSpider:
                         if dedup_key and dedup_key in seen_in_run:
                             page_duplicate += 1
                             continue
-                        # 数据库去重检查
-                        if db_manager and db_manager.exists(announcement['id']):
+                        # 数据库去重检查（skip_db_dedup 时跳过，用于实验室强制干跑）
+                        if not skip_db_dedup and db_manager and db_manager.exists(announcement['id']):
                             consecutive_exists += 1
                             page_duplicate += 1
                             if consecutive_exists >= max_consecutive_exists:

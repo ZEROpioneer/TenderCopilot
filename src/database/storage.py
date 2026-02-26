@@ -65,6 +65,12 @@ class DatabaseManager:
                 FOREIGN KEY (announcement_id) REFERENCES announcements(id)
             )
         """)
+        # 安全迁移：为旧表添加 score_breakdown 字段
+        try:
+            cursor.execute("ALTER TABLE filtered_projects ADD COLUMN score_breakdown TEXT")
+            self.conn.commit()
+        except Exception:
+            pass
         
         # 创建分析结果表
         cursor.execute("""
@@ -212,28 +218,32 @@ class DatabaseManager:
                 return False
     
     def save_filtered_project(self, announcement_id, match_results, feasibility):
-        """保存筛选项目。同一公告当日已存在则跳过，避免重复插入。"""
+        """保存筛选项目。若已存在则更新最新一条，否则插入（支持实验室 force_mode 覆盖）。"""
+        score_breakdown_json = json.dumps(feasibility.get("score_breakdown") or [], ensure_ascii=False)
         with self.lock:
             cursor = self.conn.cursor()
             try:
-                # 去重：当日已存在该 announcement_id 则跳过
+                payload = (
+                    json.dumps(match_results),
+                    feasibility['total'],
+                    feasibility['level'],
+                    score_breakdown_json,
+                    announcement_id,
+                )
+                # 先尝试更新该公告最新一条（同一 announcement_id 可能有多条历史）
                 cursor.execute("""
-                    SELECT 1 FROM filtered_projects
-                    WHERE announcement_id = ? AND date(filtered_at) = date('now', 'localtime')
-                """, (announcement_id,))
-                if cursor.fetchone():
-                    logger.debug(f"⏭️ 跳过重复写入 filtered_projects: {announcement_id}")
+                    UPDATE filtered_projects
+                    SET matched_directions = ?, feasibility_score = ?, feasibility_level = ?, score_breakdown = ?, filtered_at = CURRENT_TIMESTAMP
+                    WHERE id = (SELECT id FROM filtered_projects WHERE announcement_id = ? ORDER BY filtered_at DESC LIMIT 1)
+                """, payload)
+                if cursor.rowcount > 0:
+                    self.conn.commit()
                     return True
                 cursor.execute("""
                     INSERT INTO filtered_projects 
-                    (announcement_id, matched_directions, feasibility_score, feasibility_level)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    announcement_id,
-                    json.dumps(match_results),
-                    feasibility['total'],
-                    feasibility['level']
-                ))
+                    (announcement_id, matched_directions, feasibility_score, feasibility_level, score_breakdown)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (payload[4], payload[0], payload[1], payload[2], payload[3]))
                 self.conn.commit()
                 return True
             except Exception as e:
@@ -241,19 +251,37 @@ class DatabaseManager:
                 return False
     
     def save_analysis_result(self, announcement_id, extracted_info, confidence_score):
-        """保存分析结果"""
+        """保存分析结果。确保 AI 提取的核心字段被正确存入。"""
+        if not isinstance(extracted_info, dict):
+            extracted_info = extracted_info or {}
+        # 确保核心字段存在
+        for key, default in [
+            ("confidentiality_req", "未知"),
+            ("project_summary", "未知"),
+            ("doc_deadline", "未知"),
+            ("bid_deadline", "未知"),
+            ("budget_info", "未公布"),
+            ("bid_location", "未知"),
+            ("contact_info", "未知"),
+            ("doc_claim_method", "未知"),
+            ("bid_method", "未知"),
+        ]:
+            if key not in extracted_info or not str(extracted_info.get(key, "")).strip():
+                extracted_info[key] = extracted_info.get(key) or default
         with self.lock:
             cursor = self.conn.cursor()
             try:
+                payload = json.dumps(extracted_info)
                 cursor.execute("""
-                    INSERT OR REPLACE INTO analysis_results 
-                    (announcement_id, extracted_info, confidence_score, analyzed_at)
-                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                """, (
-                    announcement_id,
-                    json.dumps(extracted_info),
-                    confidence_score
-                ))
+                    UPDATE analysis_results
+                    SET extracted_info = ?, confidence_score = ?, analyzed_at = CURRENT_TIMESTAMP
+                    WHERE announcement_id = ?
+                """, (payload, confidence_score, announcement_id))
+                if cursor.rowcount == 0:
+                    cursor.execute("""
+                        INSERT INTO analysis_results (announcement_id, extracted_info, confidence_score)
+                        VALUES (?, ?, ?)
+                    """, (announcement_id, payload, confidence_score))
                 self.conn.commit()
                 return True
             except Exception as e:
@@ -425,6 +453,38 @@ class DatabaseManager:
         results = cursor.execute(query).fetchall()
         return [dict(row) for row in results]
     
+    BUSINESS_TABLES = ("announcements", "filtered_projects", "analysis_results", "interested_projects")
+
+    def get_table_counts(self) -> dict:
+        """统计核心业务表的数据量。仅统计业务数据表，不包含系统配置/规则类表。"""
+        counts = {}
+        with self.lock:
+            cursor = self.conn.cursor()
+            for table in self.BUSINESS_TABLES:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    counts[table] = cursor.fetchone()[0]
+                except Exception as e:
+                    logger.warning(f"统计表 {table} 失败: {e}")
+                    counts[table] = 0
+        return counts
+
+    def clear_business_data(self) -> None:
+        """清空核心业务表数据。仅清空 announcements、filtered_projects、analysis_results、interested_projects。
+        ⚠️ 绝不删除或清空系统配置、规则类型表或配置文件。"""
+        with self.lock:
+            cursor = self.conn.cursor()
+            # 按外键依赖顺序删除：先删子表，再删主表
+            for table in ("filtered_projects", "analysis_results", "interested_projects", "announcements"):
+                try:
+                    cursor.execute(f"DELETE FROM {table}")
+                    self.conn.commit()
+                    logger.info(f"已清空表 {table}")
+                except Exception as e:
+                    logger.error(f"清空表 {table} 失败: {e}")
+                    self.conn.rollback()
+                    raise
+
     def execute_query(self, query, params=None):
         """执行数据库查询
         

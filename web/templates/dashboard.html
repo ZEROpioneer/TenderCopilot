@@ -2,12 +2,17 @@
 {% block title %}控制台 · TenderCopilot{% endblock %}
 {% block head_extra %}
   <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <style>
     body { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
     .log-console { font-size: 11px; white-space: pre-wrap; word-break: break-all; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; border-radius: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
   </style>
 {% endblock %}
 {% block content %}
+  <!-- 核心功能区：控制面板、情报监控台、快速配置 -->
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
     <!-- 左侧：控制面板 -->
     <aside class="lg:col-span-4 xl:col-span-3 space-y-4">
@@ -48,26 +53,14 @@
       </section>
     </aside>
 
-    <!-- 中间：情报中心 -->
+    <!-- 中间：最新动态滚屏栏 -->
     <section class="lg:col-span-8 xl:col-span-6 border border-gray-700 rounded-lg p-4 bg-gray-800">
-      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">情报中心 · 高分项目 (≥80)</h2>
-      <div class="flex gap-2 mb-3">
-        <select name="order" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-300"
-                hx-get="/api/intel/top/html" hx-trigger="change" hx-target=".intel-center-content" hx-swap="outerHTML"
-                hx-include="[name=min_score]">
-          <option value="score">按分数</option>
-          <option value="time">按时间</option>
-        </select>
-        <select name="min_score" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-300"
-                hx-get="/api/intel/top/html" hx-trigger="change" hx-target=".intel-center-content" hx-swap="outerHTML"
-                hx-include="[name=order]">
-          <option value="80">≥80</option>
-          <option value="60">≥60</option>
-          <option value="0">全部</option>
-        </select>
+      <div class="flex justify-between items-center mb-3">
+        <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">最新动态</h2>
+        <a href="/intel" class="text-blue-400 hover:text-blue-300 text-sm font-medium">查看完整情报 ➡️</a>
       </div>
-      <div class="intel-center-content"
-           hx-get="/api/intel/top/html?min_score=80&limit=20&order=score"
+      <div class="intel-center-content max-h-[450px] overflow-y-auto pr-2 custom-scrollbar"
+           hx-get="/api/intel/latest/compact_html?limit=20"
            hx-trigger="load, every 30s"
            hx-swap="innerHTML">
         <p class="text-gray-500">加载中...</p>
@@ -96,7 +89,84 @@
     </aside>
   </div>
 
+  <!-- 决策大屏：数据可视化 -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-8">
+    <div class="border border-gray-700 rounded-lg p-4 bg-gray-800 h-[320px]">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">转化漏斗</h3>
+      <div id="chart-funnel" class="w-full h-[260px]"></div>
+    </div>
+    <div class="border border-gray-700 rounded-lg p-4 bg-gray-800 h-[320px]">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">近 15 天命中趋势</h3>
+      <div id="chart-trend" class="w-full h-[260px]"></div>
+    </div>
+    <div class="border border-gray-700 rounded-lg p-4 bg-gray-800 h-[320px]">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">地域分布 Top 10</h3>
+      <div id="chart-location" class="w-full h-[260px]"></div>
+    </div>
+  </div>
+
   <script>
+    (function initCharts() {
+      var darkText = '#9ca3af';
+      var darkLine = '#374151';
+      fetch('/api/stats/dashboard').then(function(r) { return r.json(); }).then(function(data) {
+        var fd = data.funnel_data || {};
+        var td = data.trend_data || {};
+        var ld = data.location_data || {};
+
+        var chartFunnel = document.getElementById('chart-funnel');
+        if (chartFunnel && typeof echarts !== 'undefined') {
+          var c1 = echarts.init(chartFunnel);
+          c1.setOption({
+            backgroundColor: 'transparent',
+            textStyle: { color: darkText },
+            tooltip: { trigger: 'item', textStyle: { color: darkText } },
+            series: [{
+              type: 'funnel',
+              left: '10%', width: '80%', top: 20, bottom: 20,
+              minSize: '20%', maxSize: '100%',
+              sort: 'descending',
+              gap: 4,
+              label: { show: true, position: 'inside', color: '#111' },
+              labelLine: { show: false },
+              itemStyle: { borderColor: darkLine, borderWidth: 1 },
+              data: [
+                { value: fd.total_crawled || 0, name: '全网抓取', itemStyle: { color: '#3b82f6' } },
+                { value: fd.matched || 0, name: '命中规则', itemStyle: { color: '#10b981' } },
+                { value: fd.interested || 0, name: '重点关注', itemStyle: { color: '#f59e0b' } }
+              ]
+            }]
+          });
+        }
+
+        var chartTrend = document.getElementById('chart-trend');
+        if (chartTrend && typeof echarts !== 'undefined') {
+          var c2 = echarts.init(chartTrend);
+          c2.setOption({
+            backgroundColor: 'transparent',
+            textStyle: { color: darkText },
+            grid: { left: 50, right: 30, top: 20, bottom: 30 },
+            xAxis: { type: 'category', data: (td.dates || []).map(function(d) { return d.slice(5); }), axisLine: { lineStyle: { color: darkLine } }, axisLabel: { color: darkText } },
+            yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: darkLine, type: 'dashed' } }, axisLabel: { color: darkText } },
+            series: [{ type: 'line', data: td.counts || [], smooth: true, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(16, 185, 129, 0.4)' }, { offset: 1, color: 'rgba(16, 185, 129, 0)' }] } }, lineStyle: { color: '#10b981' }, itemStyle: { color: '#10b981' } }]
+          });
+        }
+
+        var chartLocation = document.getElementById('chart-location');
+        if (chartLocation && typeof echarts !== 'undefined') {
+          var c3 = echarts.init(chartLocation);
+          c3.setOption({
+            backgroundColor: 'transparent',
+            textStyle: { color: darkText },
+            grid: { left: 80, right: 40, top: 10, bottom: 20 },
+            xAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: darkLine, type: 'dashed' } }, axisLabel: { color: darkText } },
+            yAxis: { type: 'category', data: (ld.regions || []).slice().reverse(), axisLine: { lineStyle: { color: darkLine } }, axisLabel: { color: darkText } },
+            series: [{ type: 'bar', data: (ld.counts || []).slice().reverse(), itemStyle: { color: '#3b82f6' }, barWidth: '60%' }]
+          });
+        }
+      });
+    })();
+
     var logEventSource = null;
     function connectLogStream() {
       if (logEventSource) logEventSource.close();

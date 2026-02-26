@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}情报监控台 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+{% endblock %}
+{% block content %}
+  <div class="border border-gray-700 rounded-lg p-4 bg-gray-800">
+    <h1 class="text-lg font-semibold text-gray-100 mb-2">情报监控台</h1>
+    <p class="text-sm text-gray-500 mb-4">最近抓取的招标项目 · 突出显示：摘要、预算、保密资质 · 仅展示数据库记录，不触发爬虫</p>
+    <div class="intel-center-content"
+         hx-get="/api/intel/latest/html?limit=50"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML">
+      <p class="text-gray-500">加载中...</p>
+    </div>
+  </div>
+{% endblock %}

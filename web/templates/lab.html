@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}开发者实验室 · TenderCopilot{% endblock %}
+{% block head_extra %}
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    #lab-spinner, #sniper-spinner, #rule-spinner, #rule-url-spinner, #spider-spinner { opacity: 0; transition: opacity .2s; }
+    #lab-spinner.htmx-request, #sniper-spinner.htmx-request, #rule-spinner.htmx-request, #rule-url-spinner.htmx-request, #spider-spinner.htmx-request { opacity: 1; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="border border-gray-700 rounded-lg p-4 bg-gray-800">
+    <h1 class="text-lg font-semibold text-gray-100 mb-4">🧪 开发者实验室</h1>
+
+    <!-- Tab 导航栏 -->
+    <div class="flex border-b border-gray-700 mb-6 -mx-4 px-4">
+      <button type="button" data-tab="tab-sniper" class="lab-tab lab-tab-active px-4 py-3 text-sm font-medium border-b-2 border-blue-400 text-blue-400 transition">
+        🎯 AI 提取狙击手
+      </button>
+      <button type="button" data-tab="tab-rule" class="lab-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300 transition">
+        🧩 规则透视镜
+      </button>
+      <button type="button" data-tab="tab-spider" class="lab-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300 transition">
+        🕷️ 爬虫探针
+      </button>
+      <button type="button" data-tab="tab-dryrun" class="lab-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300 transition">
+        ⚙️ 全链路干跑
+      </button>
+      <button type="button" data-tab="tab-cleanup" class="lab-tab px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300 hover:text-red-400 transition">
+        🧹 数据清理 (Data Cleanup)
+      </button>
+    </div>
+
+    <!-- Tab 内容区 -->
+    <div id="tab-sniper" class="lab-tab-pane">
+    <section class="border border-gray-600 rounded-lg p-4 bg-gray-900/50 mb-4">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">🎯 AI 提取狙击手 (Single URL)</h2>
+      <form
+        hx-post="/api/lab/sniper"
+        hx-target="#sniper-result"
+        hx-swap="innerHTML"
+        hx-indicator="#sniper-spinner"
+        hx-disabled-elt="button[type='submit']"
+        class="space-y-3"
+      >
+        <input
+          type="url"
+          name="url"
+          required
+          placeholder="请输入军队采购网或相关详情页 URL..."
+          class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+        />
+        <button
+          type="submit"
+          class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-lg transition disabled:opacity-50"
+        >
+          <span id="sniper-spinner" class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+          ⚡ 精准提取
+        </button>
+      </form>
+      <div id="sniper-result" class="mt-4"></div>
+    </section>
+    </div>
+
+    <div id="tab-rule" class="lab-tab-pane hidden">
+    <section class="border border-gray-600 rounded-lg p-4 bg-gray-900/50 mb-4">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">🧩 规则透视镜 (Rule Engine Debugger)</h2>
+      <p class="text-xs text-gray-500 mb-3">双输入模式：真实 URL 抓取算分，或手动构造数据测试。</p>
+
+      <!-- 模式一：真实 URL 测试 -->
+      <form
+        hx-post="/api/lab/rule_test_url"
+        hx-target="#rule-result"
+        hx-swap="innerHTML"
+        hx-indicator="#rule-url-spinner"
+        hx-disabled-elt="button[type='submit']"
+        class="space-y-3"
+      >
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">输入真实项目 URL</label>
+          <input type="url" name="url" required placeholder="输入真实项目 URL (将自动抓取并走 AI 提取后算分)"
+                 class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+        </div>
+        <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-lg transition disabled:opacity-50">
+          <span id="rule-url-spinner" class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+          🔗 抓取并测算 (URL 模式)
+        </button>
+      </form>
+
+      <!-- 视觉分割线 -->
+      <div class="relative flex py-5 items-center">
+        <div class="flex-grow border-t border-gray-600"></div>
+        <span class="flex-shrink-0 mx-4 text-gray-500 text-sm">或者手动构造数据</span>
+        <div class="flex-grow border-t border-gray-600"></div>
+      </div>
+
+      <!-- 模式二：手动构造数据 -->
+      <form
+        hx-post="/api/lab/rule_test"
+        hx-target="#rule-result"
+        hx-swap="innerHTML"
+        hx-indicator="#rule-spinner"
+        hx-disabled-elt="button[type='submit']"
+        class="space-y-3"
+      >
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">项目标题 <span class="text-amber-400">*</span></label>
+          <input type="text" name="title" required placeholder="如：辽宁省某单位VR仿真训练系统采购项目"
+                 class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">项目正文（选填）</label>
+          <textarea name="content" rows="4" placeholder="补充正文内容，用于关键词匹配..."
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">预算金额（选填，万元）</label>
+            <input type="number" name="budget" step="0.01" min="0" placeholder="如 80"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">地域（选填）</label>
+            <input type="text" name="location" placeholder="如 辽宁省 大连市"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+          </div>
+        </div>
+        <button type="submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-lg transition disabled:opacity-50">
+          <span id="rule-spinner" class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+          🔍 测试算分与过滤
+        </button>
+      </form>
+      <div id="rule-result" class="mt-4"></div>
+    </section>
+    </div>
+
+    <div id="tab-spider" class="lab-tab-pane hidden">
+    <section class="border border-gray-600 rounded-lg p-4 bg-gray-900/50 mb-4">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">🕷️ 爬虫探针 (Spider Probe)</h2>
+      <p class="text-xs text-gray-500 mb-3">纯粹测试爬虫能否成功抓取网页纯文本，不调 AI、不走后续流程。用于排查网站改版导致抓取失败。</p>
+      <form
+        hx-post="/api/lab/spider_test"
+        hx-target="#spider-result"
+        hx-swap="innerHTML"
+        hx-indicator="#spider-spinner"
+        hx-disabled-elt="button[type='submit']"
+        class="space-y-3"
+      >
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">URL</label>
+          <input type="url" name="url" required placeholder="军队采购网详情页 URL..."
+                 class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+        </div>
+        <button type="submit" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-medium rounded-lg transition disabled:opacity-50">
+          <span id="spider-spinner" class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+          🕸️ 提取纯文本
+        </button>
+      </form>
+      <div id="spider-result" class="mt-4"></div>
+    </section>
+    </div>
+
+    <div id="tab-dryrun" class="lab-tab-pane hidden">
+    <section class="border border-gray-600 rounded-lg p-4 bg-gray-900/50 mb-4">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">⚙️ 全链路干跑测试 (Dry Run)</h2>
+      <form
+        hx-post="/api/lab/run_workflow"
+        hx-target="#test-result"
+        hx-swap="innerHTML"
+        hx-indicator="#lab-spinner"
+        hx-disabled-elt="button[type='submit']"
+        class="space-y-3"
+      >
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="force_mode" value="on" class="rounded border-gray-600 bg-gray-700 text-amber-500" />
+          <span class="text-sm text-gray-300">强制无视去重 (伪装为全量新数据)</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="mute_notify" value="on" class="rounded border-gray-600 bg-gray-700 text-amber-500" />
+          <span class="text-sm text-gray-300">静音模式 (拦截企微推送，仅控制台打印)</span>
+        </label>
+        <div class="pt-2">
+          <button
+            type="submit"
+            class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-medium rounded-lg transition disabled:opacity-50"
+          >
+            <span id="lab-spinner" class="htmx-indicator inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+            🚀 发起测试
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <div id="test-result" class="min-h-[4rem] text-gray-500 text-sm">
+      点击「发起测试」后，结果将显示在此处。
+    </div>
+    </div>
+
+    <div id="tab-cleanup" class="lab-tab-pane hidden">
+    <section class="max-w-2xl mx-auto border border-red-800 bg-red-900/20 rounded-lg p-8 mt-4">
+      <h2 class="text-lg font-semibold text-red-400 mb-2">⚠️ 危险区域 (Danger Zone)</h2>
+      <h3 class="text-sm font-medium text-gray-300 mb-2">清空业务数据 (Factory Reset)</h3>
+      <p class="text-sm text-gray-400 mb-4">
+        此操作将永久删除数据库中所有已抓取的招标公告、AI 评分记录和关注列表。
+        <strong class="text-gray-300">你的抓取规则和评分权重配置将被完全保留。</strong>
+        在正式上线前或需要清理测试脏数据时使用。
+      </p>
+      <div class="flex flex-wrap gap-2 mb-4 items-center">
+        <span class="text-xs text-gray-500">当前数据量：</span>
+        <span id="cleanup-stat-announcements" class="inline-flex items-center px-2 py-0.5 rounded bg-gray-700 text-gray-300 text-xs">公告 -</span>
+        <span id="cleanup-stat-filtered" class="inline-flex items-center px-2 py-0.5 rounded bg-gray-700 text-gray-300 text-xs">筛选项目 -</span>
+        <span id="cleanup-stat-analysis" class="inline-flex items-center px-2 py-0.5 rounded bg-gray-700 text-gray-300 text-xs">分析结果 -</span>
+        <span id="cleanup-stat-interested" class="inline-flex items-center px-2 py-0.5 rounded bg-gray-700 text-gray-300 text-xs">关注项目 -</span>
+        <button type="button" id="cleanup-refresh-btn" class="text-xs text-gray-500 hover:text-gray-400 underline">刷新</button>
+      </div>
+      <button type="button"
+              hx-post="/api/system/clear_data"
+              hx-target="#clear-result"
+              hx-swap="innerHTML"
+              hx-confirm="警告：确定要清空所有业务数据吗？此操作不可逆！"
+              hx-on::htmx:afterSwap="window.refreshCleanupStats && window.refreshCleanupStats()"
+              class="px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition">
+        🗑️ 一键清空所有业务数据
+      </button>
+      <div id="clear-result" class="mt-4"></div>
+    </section>
+    </div>
+
+    <!-- 全局底座：实时控制台（始终可见，不放入选项卡） -->
+    <section class="mt-6 border border-gray-600 rounded-lg p-4 bg-gray-900/50">
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">📺 实时控制台 (Live Terminal)</h2>
+      <div
+        id="lab-live-logs"
+        class="bg-gray-900 text-green-400 font-mono p-4 rounded-lg h-96 overflow-y-auto text-xs"
+        hx-get="/api/lab/logs?lines=50"
+        hx-trigger="load, every 2s"
+        hx-swap="innerHTML"
+        hx-on::htmx:afterSwap="this.scrollTop = this.scrollHeight"
+      >
+        <span class="text-gray-500">加载中...</span>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function() {
+      function refreshCleanupStats() {
+        fetch('/api/system/data_stats')
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            var el = document.getElementById('cleanup-stat-announcements');
+            if (el) el.innerHTML = '公告 ' + (d.announcements ?? '-');
+            el = document.getElementById('cleanup-stat-filtered');
+            if (el) el.innerHTML = '筛选项目 ' + (d.filtered_projects ?? '-');
+            el = document.getElementById('cleanup-stat-analysis');
+            if (el) el.innerHTML = '分析结果 ' + (d.analysis_results ?? '-');
+            el = document.getElementById('cleanup-stat-interested');
+            if (el) el.innerHTML = '关注项目 ' + (d.interested_projects ?? '-');
+          })
+          .catch(function() {});
+      }
+      window.refreshCleanupStats = refreshCleanupStats;
+
+      var tabs = document.querySelectorAll('.lab-tab');
+      var panes = document.querySelectorAll('.lab-tab-pane');
+      tabs.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var targetId = btn.getAttribute('data-tab');
+          panes.forEach(function(p) {
+            p.classList.add('hidden');
+          });
+          tabs.forEach(function(b) {
+            b.classList.remove('lab-tab-active', 'border-blue-400', 'text-blue-400');
+            b.classList.add('border-transparent', 'text-gray-400');
+          });
+          var pane = document.getElementById(targetId);
+          if (pane) pane.classList.remove('hidden');
+          btn.classList.add('lab-tab-active', 'border-blue-400', 'text-blue-400');
+          btn.classList.remove('border-transparent', 'text-gray-400');
+          if (targetId === 'tab-cleanup') refreshCleanupStats();
+        });
+      });
+
+      var refreshBtn = document.getElementById('cleanup-refresh-btn');
+      if (refreshBtn) refreshBtn.addEventListener('click', refreshCleanupStats);
+    })();
+  </script>
+{% endblock %}

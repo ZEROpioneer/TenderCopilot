@@ -1,0 +1,14 @@
+weights:
+  title_keyword: 50
+  content_keyword: 15
+  location_match: 20
+  budget_high: 10
+  time_urgent: -10
+budget_high_threshold_wan: 50
+time_urgent_threshold_days: 3
+custom_rules:
+- name: 自定义规则
+  field: title
+  operator: contains_any
+  value: ''
+  score: 0

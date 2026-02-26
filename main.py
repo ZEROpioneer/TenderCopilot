@@ -102,6 +102,16 @@ class TenderCopilot:
             compression=log_config['compression'],
             encoding='utf-8',
         )
+
+        # 持久化 app.log：供实验室 Live Terminal 读取（固定路径）
+        app_log = Path(__file__).resolve().parent / "data" / "app.log"
+        app_log.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            str(app_log),
+            format=log_config['format'],
+            level=file_level,
+            encoding='utf-8',
+        )
     
     def init_components(self):
         """初始化所有组件"""
@@ -138,10 +148,23 @@ class TenderCopilot:
         
         logger.success("✅ 组件初始化完成")
     
-    def run_pipeline(self):
-        """执行完整流程（列表页增量爬取 + 本地关键词筛选）"""
+    def run_pipeline(self, force_mode: bool = False, mute_notify: bool = False):
+        """执行完整流程（列表页增量爬取 + 本地关键词筛选）
+        
+        Args:
+            force_mode: 强制无视去重（实验室干跑测试用）
+            mute_notify: 静音模式，不推送企微，仅控制台打印
+        Returns:
+            dict: 统计信息 {total_crawled, total_matched, recommended, ...}，异常时返回空 dict
+        """
+        stats = {}
         logger.info("=" * 60)
-        logger.info("🚀 TenderCopilot 开始运行（列表页增量爬取 + 本地筛选）")
+        lab_tag = " [实验室干跑]" if (force_mode or mute_notify) else ""
+        logger.info(f"🚀 TenderCopilot 开始运行（列表页增量爬取 + 本地筛选）{lab_tag}")
+        if force_mode:
+            logger.info("  ⚙️ 强制无视去重：已启用")
+        if mute_notify:
+            logger.info("  🔇 静音模式：企微推送已拦截")
         logger.info("=" * 60)
         
         try:
@@ -182,7 +205,8 @@ class TenderCopilot:
                     db_manager=self.db,
                     max_consecutive_exists=max_consecutive,
                     max_total_items=max_total_items,
-                    warn_threshold=warn_threshold
+                    warn_threshold=warn_threshold,
+                    skip_db_dedup=force_mode,
                 )
                 
                 logger.info(f"  ✅ 爬取成功，共获取 {len(all_announcements)} 条新公告")
@@ -211,13 +235,14 @@ class TenderCopilot:
             
             if not all_announcements:
                 logger.warning("⚠️ 未爬取到任何新公告，流程结束")
-                return
+                stats = {"total_crawled": 0, "total_matched": 0, "recommended": 0, "message": "未爬取到新公告"}
+                return stats
             
             # 步骤4: 本地关键词筛选+地域检查
             logger.info("🔍 步骤 4/7: 本地关键词筛选+地域检查")
             logger.info(f"  📋 待筛选: {len(all_announcements)} 条公告")
             logger.info(f"  🔑 关键词: {', '.join(keywords[:3])}... 等{len(keywords)}个")
-            filtered = self.filter_announcements(all_announcements)
+            filtered = self.filter_announcements(all_announcements, force_mode=force_mode)
             logger.info(f"✅ 筛选出 {len(filtered)} 个匹配项目（匹配率: {len(filtered)/len(all_announcements)*100:.1f}%）")
             
             # 步骤5: 深度分析（只分析通过初筛的项目）
@@ -255,13 +280,19 @@ class TenderCopilot:
             # 生成包含所有项目的报告
             report = self.reporter.generate_daily_report(filtered, stats)
             
-            # 推送通知（优先通知推荐项目）
-            logger.info("📤 推送通知")
-            if recommended:
-                logger.info(f"   🎯 优先通知 {len(recommended)} 个推荐项目")
-            if alternatives:
-                logger.info(f"   📌 报告包含 {len(alternatives)} 个备选项目（供人工复核）")
-            self.notification_manager.send_report(report, recommended if recommended else filtered)
+            # 推送通知（静音模式下仅打印）
+            if mute_notify:
+                logger.info("📤 [静音] 拦截企微推送，报告内容如下：")
+                logger.info("-" * 40)
+                logger.info(report[:3000] + ("..." if len(report) > 3000 else ""))
+                logger.info("-" * 40)
+            else:
+                logger.info("📤 推送通知")
+                if recommended:
+                    logger.info(f"   🎯 优先通知 {len(recommended)} 个推荐项目")
+                if alternatives:
+                    logger.info(f"   📌 报告包含 {len(alternatives)} 个备选项目（供人工复核）")
+                self.notification_manager.send_report(report, recommended if recommended else filtered)
             
             # 显示统计
             crawl_stats = self.crawl_tracker.get_statistics()
@@ -274,14 +305,17 @@ class TenderCopilot:
             logger.info("=" * 60)
             
             logger.success("✅ 流程执行完成")
+            return stats
             
         except Exception as e:
             logger.error(f"❌ 流程执行失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            stats = {"error": str(e)}
         finally:
             if self.spider:
                 self.spider.close()
+        return stats
     
     def _is_new_announcement(self, announcement, last_crawl_time):
         """判断公告是否是新的（发布时间晚于上次爬取时间）
@@ -357,9 +391,9 @@ class TenderCopilot:
         
         return keywords
     
-    def filter_announcements(self, announcements):
+    def filter_announcements(self, announcements, force_mode: bool = False):
         """初步筛选公告（双轨制：策略 A 新机会 / 策略 B 智能追踪）"""
-        return self.filter_manager.process(announcements)
+        return self.filter_manager.process(announcements, force_mode=force_mode)
     
     def _analyze_single_project(self, project_info):
         """分析单个项目（可并发执行）
@@ -451,8 +485,23 @@ class TenderCopilot:
             
             # 保存到数据库
             self.db.save_filtered_project(project.project_id, project.match_results, feasibility)
-            if ai_extracted:
-                self.db.save_analysis_result(project.project_id, ai_extracted, 0.8)
+            if ai_extracted is not None:
+                # 确保 AI 核心字段被正确打包（优先用 item 属性，兜底用 ai_extracted）
+                to_save = dict(ai_extracted)
+                for key, default in [
+                    ("confidentiality_req", "未知"),
+                    ("project_summary", "未知"),
+                    ("doc_deadline", "未知"),
+                    ("bid_deadline", "未知"),
+                    ("budget_info", "未公布"),
+                    ("bid_location", "未知"),
+                    ("contact_info", "未知"),
+                    ("doc_claim_method", "未知"),
+                    ("bid_method", "未知"),
+                ]:
+                    val = getattr(project, key, None) or to_save.get(key)
+                    to_save[key] = (val or "").strip() or default
+                self.db.save_analysis_result(project.project_id, to_save, 0.8)
 
             # 高分项目加入追踪名单（智能追踪：后续更正/流标等只提醒已关注项目）
             threshold = (
@@ -502,6 +551,7 @@ class TenderCopilot:
                 'breakdown': {},
                 'passes_filter': True,
                 'time_score_details': {},
+                'score_breakdown': [{"rule": "AI分析失败，默认及格分", "points": 60}],
             }
             return project
     

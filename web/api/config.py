@@ -1,14 +1,16 @@
 """Config API: read and write YAML config (safe subset) and .env for secrets."""
 import re
-import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from fastapi import APIRouter, HTTPException
+import yaml
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_DIR = ROOT / "config"
 ENV_PATH = ROOT / ".env"
+SCORING_CONFIG_PATH = CONFIG_DIR / "scoring_config.yaml"
 
 ENV_WHITELIST = {"CUSTOM_OPENAI_API_KEY", "WECHAT_WORK_WEBHOOK", "EMAIL_PASSWORD"}
 
@@ -176,3 +178,120 @@ def put_config(payload: Dict[str, Any]):
                 existing[k] = v
         _save_yaml(path, existing)
     return {"status": "ok"}
+
+
+# --- 评分权重配置 ---
+
+DEFAULT_SCORING_WEIGHTS = {
+    "title_keyword": 30,
+    "content_keyword": 15,
+    "location_match": 20,
+    "budget_high": 10,
+    "time_urgent": -10,
+}
+
+
+@router.get("/scoring")
+def get_scoring_config():
+    """加载 scoring_config.yaml，用于前端评分权重表单。"""
+    data = _load_yaml(SCORING_CONFIG_PATH)
+    if not data:
+        data = {"weights": dict(DEFAULT_SCORING_WEIGHTS), "budget_high_threshold_wan": 50, "time_urgent_threshold_days": 3, "custom_rules": []}
+    weights = data.get("weights", {})
+    for k, v in DEFAULT_SCORING_WEIGHTS.items():
+        if k not in weights:
+            weights[k] = v
+    data["weights"] = weights
+    data["custom_rules"] = data.get("custom_rules") or []
+    return data
+
+
+def _parse_custom_rules_from_form(form) -> List[Dict]:
+    """从 form 数组解析 custom_rules。支持 rule_name[], rule_field[], rule_operator[], rule_value[], rule_score[]"""
+    def glist(key):
+        return form.getlist(key) if hasattr(form, "getlist") else ([form.get(key)] if form.get(key) is not None else [])
+    names = glist("rule_name[]") or glist("rule_name")
+    fields = glist("rule_field[]") or glist("rule_field")
+    operators = glist("rule_operator[]") or glist("rule_operator")
+    values = glist("rule_value[]") or glist("rule_value")
+    scores = glist("rule_score[]") or glist("rule_score")
+    n = max(len(names), len(fields), len(operators), len(values), len(scores), 1)
+    names = (names + [""] * n)[:n]
+    fields = (fields + ["title"] * n)[:n]
+    operators = (operators + ["contains_any"] * n)[:n]
+    values = (values + [""] * n)[:n]
+    scores = (scores + ["0"] * n)[:n]
+    rules = []
+    for t in zip(names, fields, operators, values, scores):
+        name, field, op, val, sc = (str(x or "").strip() for x in t)
+        if not name and not field:
+            continue
+        try:
+            sc_int = int(sc) if sc else 0
+        except (ValueError, TypeError):
+            sc_int = 0
+        rules.append({"name": name or "自定义规则", "field": field or "title", "operator": op or "contains_any", "value": val, "score": sc_int})
+    return rules
+
+
+@router.post("/scoring")
+async def put_scoring_config(request: Request):
+    """保存评分权重到 scoring_config.yaml。支持 JSON 或 form 提交。"""
+    # 支持 form 提交（用于传统表单）
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        existing = _load_yaml(SCORING_CONFIG_PATH) or {}
+        weights = dict(existing.get("weights", DEFAULT_SCORING_WEIGHTS))
+        for k, v in DEFAULT_SCORING_WEIGHTS.items():
+            raw = form.get(f"weights[{k}]") or form.get(k)
+            if raw is not None:
+                try:
+                    weights[k] = int(raw)
+                except (ValueError, TypeError):
+                    pass
+        budget_wan = form.get("budget_high_threshold_wan") or 50
+        time_days = form.get("time_urgent_threshold_days") or 3
+        try:
+            budget_wan = int(budget_wan) if budget_wan is not None else 50
+        except (ValueError, TypeError):
+            budget_wan = 50
+        try:
+            time_days = int(time_days) if time_days is not None else 3
+        except (ValueError, TypeError):
+            time_days = 3
+        custom_rules = _parse_custom_rules_from_form(form)
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        weights = body.get("weights", {})
+        if not isinstance(weights, dict):
+            raise HTTPException(400, "weights 必须为对象")
+        budget_wan = int(body.get("budget_high_threshold_wan", 50))
+        time_days = int(body.get("time_urgent_threshold_days", 3))
+        custom_rules = body.get("custom_rules") or []
+
+    out = {
+        "weights": {k: int(weights.get(k, v)) for k, v in DEFAULT_SCORING_WEIGHTS.items()},
+        "budget_high_threshold_wan": budget_wan,
+        "time_urgent_threshold_days": time_days,
+        "custom_rules": custom_rules if isinstance(custom_rules, list) else [],
+    }
+    # 校验 custom_rules 结构
+    validated_rules = []
+    for r in out["custom_rules"]:
+        if isinstance(r, dict) and r.get("field"):
+            validated_rules.append({
+                "name": str(r.get("name", "")).strip() or "自定义规则",
+                "field": str(r.get("field", "title")).strip() or "title",
+                "operator": str(r.get("operator", "contains_any")).strip() or "contains_any",
+                "value": str(r.get("value", "")).strip(),
+                "score": int(r.get("score", 0)) if r.get("score") is not None else 0,
+            })
+    out["custom_rules"] = validated_rules
+    _save_yaml(SCORING_CONFIG_PATH, out)
+    if request.headers.get("HX-Request") == "true":
+        return HTMLResponse('<span class="text-green-400">已保存</span>')
+    return {"status": "ok", "message": "评分权重已保存"}
