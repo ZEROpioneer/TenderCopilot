@@ -25,9 +25,9 @@ class NotificationManager:
         """发送报告到所有启用的渠道"""
         success_count = 0
         
-        # 企业微信
+        # 企业微信（按项目安全分段，避免 Markdown 语法破损）
         if self.wechat_work:
-            if self.wechat_work.send(report_content):
+            if self.wechat_work.send(report_content, projects=projects):
                 success_count += 1
         
         # 个人微信（Server酱/PushPlus）

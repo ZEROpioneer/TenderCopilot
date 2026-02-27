@@ -1,37 +1,55 @@
-"""定时任务调度"""
+"""定时任务调度（main.py --mode schedule 使用）"""
 
+from datetime import datetime
+
+import pytz
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime
-import time
 from loguru import logger
-import pytz
+
+# 强制使用上海时区
+TZ = pytz.timezone("Asia/Shanghai")
 
 
 class TaskScheduler:
-    """定时任务调度器"""
-    
+    """定时任务调度器（BlockingScheduler，用于独立进程模式）"""
+
     def __init__(self, config, pipeline_func):
-        timezone = config.get('timezone', 'Asia/Shanghai')
-        self.scheduler = BlockingScheduler(timezone=pytz.timezone(timezone))
+        self.scheduler = BlockingScheduler(timezone=TZ)
         self.config = config
         self.pipeline_func = pipeline_func
-    
+
     def add_daily_tasks(self):
-        """添加每日4次定时任务"""
-        times = self.config.get('times', ['09:00', '11:55', '13:00', '17:55'])
-        
+        """添加每日定时任务"""
+        times = self.config.get("times", ["09:00", "11:55", "13:00", "17:55"])
+        if isinstance(times, str):
+            times = [t.strip() for t in times.split("\n") if t.strip()]
+
         for time_str in times:
-            hour, minute = map(int, time_str.split(':'))
-            
+            time_str = str(time_str or "").strip()
+            if not time_str:
+                continue
+            try:
+                parts = time_str.split(":")
+                hour, minute = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+            except (ValueError, IndexError):
+                logger.warning(f"⏰ 跳过无效时间格式: {time_str}")
+                continue
+
+            job_id = f"daily_task_{time_str}"
             self.scheduler.add_job(
                 func=self._run_task,
-                trigger=CronTrigger(hour=hour, minute=minute),
-                id=f'daily_task_{time_str}',
-                name=f'每日招标爬取任务 {time_str}',
-                replace_existing=True
+                trigger=CronTrigger(hour=hour, minute=minute, timezone=TZ),
+                id=job_id,
+                name=f"每日招标爬取任务 {time_str}",
+                replace_existing=True,
             )
-            logger.info(f"✅ 已添加定时任务: 每天 {time_str}")
+            logger.info(f"✅ 已添加定时任务: 每天 {time_str} (id={job_id})")
+
+        for j in self.scheduler.get_jobs():
+            next_run = getattr(j, "next_run_time", None)
+            if next_run:
+                logger.info(f"   下次执行: {j.id} -> {next_run.astimezone(TZ).strftime('%Y-%m-%d %H:%M:%S')}")
     
     def _run_task(self):
         """执行任务"""

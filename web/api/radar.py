@@ -5,7 +5,7 @@ import re
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -126,7 +126,8 @@ def radar_html():
         doc_dl = html.escape((p.get("doc_deadline") or "未知"))
         bid_dl = html.escape((p.get("bid_deadline") or "未知"))
         score = p.get("ai_score") or 0
-        url_esc = html.escape(p.get("url") or "#")
+        url_raw = p.get("url") or "#"
+        url_esc = "#" if (url_raw and url_raw.startswith("manual://")) else html.escape(url_raw)
         parts.append(f"""
 <div class="radar-card border border-gray-700 rounded-lg p-3 bg-gray-800/80 hover:border-gray-600 transition">
   <div class="flex justify-between items-start gap-2 mb-2">
@@ -151,8 +152,90 @@ def radar_html():
   </div>
 </div>""")
     if not parts:
-        parts.append('<p class="text-gray-500 col-span-full py-8 text-center">暂无关注项目，在情报监控台点击「⭐ 关注」添加。</p>')
-    return '<div class="grid gap-3">' + "".join(parts) + "</div>"
+        parts.append('<p class="text-gray-500 col-span-full py-8 text-center">暂无关注项目，在情报监控台点击「⭐ 关注」添加，或使用上方「手动录入」。</p>')
+    return "".join(parts)
+
+
+def _render_radar_card(p: dict) -> str:
+    """渲染单条项目卡片 HTML（供列表与 manual_add 复用）"""
+    pid = html.escape(p.get("id") or "")
+    title_esc = html.escape((p.get("title") or "")[:80])
+    loc_esc = html.escape((p.get("location") or "未知")[:20])
+    summary_esc = html.escape((p.get("project_summary") or "未知"))
+    budget_esc = html.escape((p.get("budget_info") or p.get("budget") or "未公布"))
+    doc_dl = html.escape((p.get("doc_deadline") or "未知"))
+    bid_dl = html.escape((p.get("bid_deadline") or "未知"))
+    score = p.get("ai_score") or 0
+    url_esc = html.escape(p.get("url") or "#")
+    if url_esc.startswith("manual://"):
+        url_esc = "#"
+    return f"""
+<div class="radar-card border border-gray-700 rounded-lg p-3 bg-gray-800/80 hover:border-gray-600 transition">
+  <div class="flex justify-between items-start gap-2 mb-2">
+    <h3 class="font-medium text-gray-100 text-sm leading-snug flex-1 min-w-0">[{loc_esc}] {title_esc}</h3>
+    <span class="flex-shrink-0 font-mono font-bold text-cyan-400 text-sm">{score:.1f}</span>
+  </div>
+  <p class="text-amber-200/90 text-xs font-medium mb-2">🎯 {summary_esc}</p>
+  <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400 mb-2">
+    <span>💰 {budget_esc}</span>
+    <span>⏰ {doc_dl}</span>
+    <span>⏳ {bid_dl}</span>
+  </div>
+  <div class="flex items-center justify-between pt-2 border-t border-gray-700">
+    <a href="{url_esc}" target="_blank" rel="noopener" class="text-cyan-400 hover:text-cyan-300 text-xs font-medium">查看原文</a>
+    <button type="button"
+            hx-post="/api/radar/untrack/{pid}"
+            hx-target="closest .radar-card"
+            hx-swap="outerHTML"
+            class="text-red-400 hover:text-red-300 text-xs font-medium">
+      ❌ 取消关注
+    </button>
+  </div>
+</div>"""
+
+
+@router.post("/manual_add", response_class=HTMLResponse)
+async def manual_add_project(request: Request):
+    """手动录入外部项目，返回新项目卡片 HTML 供 HTMX afterbegin 插入。"""
+    try:
+        form = await request.form()
+        title = (form.get("title") or "").strip()
+        if not title:
+            return HTMLResponse('<p class="text-red-400 text-sm py-2">❌ 项目标题不能为空</p>', status_code=400)
+        url = (form.get("url") or "").strip()
+        budget = (form.get("budget") or "").strip()
+        deadline = (form.get("deadline") or "").strip()
+        notes = (form.get("notes") or "").strip()
+        pub_date = (form.get("pub_date") or "").strip()
+
+        db = get_db(ROOT)
+        ann_id = db.add_manual_project(
+            title=title,
+            url=url,
+            budget=budget,
+            deadline=deadline,
+            notes=notes,
+            pub_date=pub_date,
+        )
+
+        # 构造与 radar_list 一致的卡片数据
+        p = {
+            "id": ann_id,
+            "title": title,
+            "location": "手动录入",
+            "url": url or "#",
+            "pub_date": pub_date,
+            "deadline": deadline,
+            "budget": budget,
+            "project_summary": notes or "手动录入项目",
+            "budget_info": budget or "未公布",
+            "doc_deadline": deadline or "未知",
+            "bid_deadline": deadline or "未知",
+            "ai_score": 0,
+        }
+        return HTMLResponse(_render_radar_card(p))
+    except Exception as e:
+        return HTMLResponse(f'<p class="text-red-400 text-sm py-2">❌ 录入失败: {html.escape(str(e))}</p>', status_code=500)
 
 
 @router.post("/untrack/{project_id}", response_class=HTMLResponse)

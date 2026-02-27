@@ -206,12 +206,22 @@
             <div>
               <label class="block text-sm font-medium text-gray-400 mb-1">📥 自动入库分数线 (min_total_score)</label>
               <input type="number" x-model.number="config.settings.scoring.min_total_score" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
-              <p class="text-xs text-gray-500 mt-1">低于此分数的项目将被直接拦截，不推送不入库。建议：60</p>
+              <p class="text-xs text-gray-500 mt-1">📥 自动入库分数线，低于此分数直接丢弃不入库。建议：30</p>
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-400 mb-1">🕸️ 单次最大详情抓取数 (max_fetch_details)</label>
-              <input type="number" x-model.number="config.settings.spider.max_fetch_details" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
-              <p class="text-xs text-gray-500 mt-1">防止单次请求量过大被封 IP。建议：50</p>
+              <label class="block text-sm font-medium text-gray-400 mb-1">🚀 企微推送分数线 (push_threshold)</label>
+              <input type="number" x-model.number="config.settings.scoring.push_threshold" min="0" max="100" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+              <p class="text-xs text-gray-500 mt-1">高于此分数的项目将通过企业微信强提醒推送。建议：65</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1">🧱 连续重复熔断阈值 (max_consecutive_exists)</label>
+              <input type="number" x-model.number="config.settings.crawl_strategy.max_consecutive_exists" min="1" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+              <p class="text-xs text-gray-500 mt-1">连续遇到多少个已存在的老数据后停止抓取。建议：15 (防置顶公告干扰)</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1">🛑 单次硬性抓取上限 (max_total_items)</label>
+              <input type="number" x-model.number="config.settings.crawl_strategy.max_total_items" min="1" class="w-full max-w-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+              <p class="text-xs text-gray-500 mt-1">单次任务最多抓取的新项目数量。建议：1000 (防长假后积压漏抓)</p>
             </div>
           </div>
         </div>
@@ -396,7 +406,11 @@
             this.config = await r.json();
             const s = this.config.settings || {};
             if (!s.scoring) s.scoring = {};
+            if (s.scoring.push_threshold == null) s.scoring.push_threshold = 65;
             if (!s.spider) s.spider = {};
+            if (!s.crawl_strategy) s.crawl_strategy = {};
+            if (s.crawl_strategy.max_consecutive_exists == null) s.crawl_strategy.max_consecutive_exists = 15;
+            if (s.crawl_strategy.max_total_items == null) s.crawl_strategy.max_total_items = 1000;
             if (!s.analyzer) s.analyzer = {};
             if (!s.scheduler) s.scheduler = { enabled: true, times: [], timezone: 'Asia/Shanghai' };
             if (s.scheduler.enabled === undefined) s.scheduler.enabled = true;

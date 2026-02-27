@@ -200,8 +200,10 @@ class ConfigManager:
         """应用默认值"""
         defaults = {
             'crawl_strategy': {
-                'max_pages': 5,
-                'max_consecutive_exists': 5,
+                'max_pages': None,
+                'max_consecutive_exists': 15,
+                'max_total_items': 1000,
+                'warn_threshold': 200,
                 'initial_hours': 168,
             },
             'spider': {
@@ -227,6 +229,10 @@ class ConfigManager:
                     merge_defaults(config[key], value)
         
         merge_defaults(self._config, defaults)
+        # 评分阈值默认值
+        scoring = self._config.setdefault('scoring', {})
+        if 'push_threshold' not in scoring:
+            scoring['push_threshold'] = 65
     
     def validate(self):
         """验证配置完整性和有效性"""

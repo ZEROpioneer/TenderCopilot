@@ -3,6 +3,7 @@
 {% block head_extra %}
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
 {% endblock %}
 {% block content %}
   <div x-data="historyApp()" x-init="init()" class="space-y-6">
@@ -28,7 +29,11 @@
                 <td class="px-4 py-3 text-sm" x-text="r.created || r.filename"></td>
                 <td class="px-4 py-3 text-sm text-gray-400" x-text="r.filename"></td>
                 <td class="px-4 py-3">
-                  <a href="#" @click.prevent="openReport(r.id)" class="text-blue-500 hover:text-blue-400 text-sm font-medium">查看</a>
+                  <button type="button"
+                          @click="openReport(r.id)"
+                          class="text-blue-500 hover:text-blue-400 text-sm font-medium cursor-pointer">
+                    查看
+                  </button>
                 </td>
               </tr>
             </template>
@@ -43,13 +48,31 @@
       </div>
     </div>
 
-    <!-- 报告详情（点击查看后显示） -->
-    <div x-show="reportDetail" x-cloak class="border border-gray-700 rounded-lg overflow-hidden bg-gray-800">
-      <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
-        <h2 class="text-sm font-semibold text-gray-300">报告内容</h2>
-        <button type="button" @click="reportDetail=null" class="text-sm text-gray-400 hover:text-gray-200">关闭</button>
+    <!-- 报告详情弹窗 Modal -->
+    <div x-show="showReportModal"
+         x-cloak
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/70" @click="showReportModal = false"></div>
+      <div class="relative w-full max-w-4xl max-h-[85vh] flex flex-col bg-gray-800 border border-gray-600 rounded-lg shadow-xl"
+           @click.stop>
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-600 flex-shrink-0">
+          <h2 class="text-sm font-semibold text-gray-200">报告内容</h2>
+          <button type="button"
+                  @click="showReportModal = false"
+                  class="text-gray-400 hover:text-gray-100 text-sm font-medium px-2 py-1 rounded hover:bg-gray-700">
+            关闭
+          </button>
+        </div>
+        <div id="report-modal-content"
+             class="p-4 overflow-y-auto max-h-[70vh] text-gray-300">
+        </div>
       </div>
-      <div class="p-4 overflow-x-auto max-h-[70vh] overflow-y-auto prose prose-invert prose-sm max-w-none" x-html="reportDetailHtml"></div>
     </div>
 
     <!-- 爬取历史 · 数据表格 -->
@@ -93,8 +116,7 @@
         historyCrawls: [],
         loading: true,
         loadingCrawls: false,
-        reportDetail: null,
-        reportDetailHtml: '',
+        showReportModal: false,
         async init() {
           await Promise.all([this.loadReports(), this.loadCrawls()]);
         },
@@ -117,13 +139,18 @@
           this.loadingCrawls = false;
         },
         async openReport(id) {
+          const el = document.getElementById('report-modal-content');
+          if (!el) return;
+          el.innerHTML = '<p class="text-gray-500">加载中...</p>';
+          this.showReportModal = true;
           try {
-            const r = await fetch('/api/reports/' + encodeURIComponent(id));
-            const d = await r.json();
-            this.reportDetail = d.markdown;
-            this.reportDetailHtml = typeof marked !== 'undefined' ? marked.parse(d.markdown || '') : (d.markdown || '');
-          } catch (e) { this.reportDetailHtml = '加载失败'; }
-        }
+            const r = await fetch('/api/reports/view/' + encodeURIComponent(id));
+            const html = await r.text();
+            el.innerHTML = r.ok ? html : '<p class="text-red-400">加载失败</p>';
+          } catch (e) {
+            el.innerHTML = '<p class="text-red-400">加载失败</p>';
+          }
+        },
       };
     }
   </script>

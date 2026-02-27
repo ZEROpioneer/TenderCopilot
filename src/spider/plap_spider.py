@@ -216,7 +216,8 @@ class PLAPSpider:
                                 should_stop = True
                                 break
                             continue
-                        consecutive_exists = 0  # 重置计数器
+                        # ⚠️ 关键：当前条不在数据库中（新公告），必须清零，防止置顶公告导致误熔断
+                        consecutive_exists = 0
                         if dedup_key:
                             seen_in_run.add(dedup_key)
                         page_new += 1

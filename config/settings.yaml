@@ -30,8 +30,8 @@ crawl_strategy:
   enable_time_filter: false
   initial_hours: 168
   max_pages: null
-  max_consecutive_exists: 5
-  max_total_items: 300
+  max_consecutive_exists: 15
+  max_total_items: 1000
   warn_threshold: 200
 scheduler:
   enabled: false
@@ -40,6 +40,7 @@ scheduler:
   - '11:55'
   - '13:00'
   - '17:55'
+  - '11:13'
   timezone: Asia/Shanghai
   max_runtime_minutes: 30
 database:
@@ -70,7 +71,8 @@ deep_analysis:
   analyze_pdf: true
   analyze_docx: true
 scoring:
-  min_total_score: 65
+  min_total_score: 30
+  push_threshold: 30
   min_relevance_score: 40
   min_deadline_days: 3
   weights:

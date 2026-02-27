@@ -288,6 +288,59 @@ class DatabaseManager:
                 logger.error(f"❌ 保存分析结果失败: {e}")
                 return False
     
+    def add_manual_project(
+        self,
+        title: str,
+        url: str = "",
+        budget: str = "",
+        deadline: str = "",
+        notes: str = "",
+        pub_date: str = "",
+    ) -> str:
+        """手动录入外部项目到追踪雷达。
+
+        插入 announcements 和 interested_projects，使用 manual_ 前缀 ID 区分。
+        返回新创建的 announcement_id。
+        """
+        import hashlib
+        import uuid
+        ann_id = "manual_" + uuid.uuid4().hex[:16]
+        # 避免 url 空字符串导致 UNIQUE 冲突
+        url_val = (url or "").strip() or f"manual://{ann_id}"
+        title_val = (title or "").strip() or "未命名项目"
+        with self.lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("""
+                    INSERT INTO announcements
+                    (id, title, content, pub_date, url, location, budget, deadline, contact, attachments)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    ann_id,
+                    title_val,
+                    (notes or "").strip(),
+                    (pub_date or "").strip() or None,
+                    url_val,
+                    "手动录入",
+                    (budget or "").strip() or None,
+                    (deadline or "").strip() or None,
+                    None,
+                    "[]",
+                ))
+                fp = hashlib.sha256(f"manual_{ann_id}".encode()).hexdigest()
+                cursor.execute("""
+                    INSERT INTO interested_projects
+                    (project_fingerprint, project_name, source_announcement_id, feasibility_score)
+                    VALUES (?, ?, ?, ?)
+                """, (fp, title_val, ann_id, 0.0))
+                self.conn.commit()
+                logger.info(f"✅ 手动录入项目已保存: {ann_id}")
+                return ann_id
+            except Exception as e:
+                logger.error(f"❌ 手动录入失败: {e}")
+                self.conn.rollback()
+                raise
+
     def add_interested_project(
         self,
         project_code: str = None,

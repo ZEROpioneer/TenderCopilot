@@ -35,14 +35,13 @@ class MarkdownReporter:
             key=lambda x: x.feasibility["total"],
             reverse=True,
         )
-        
-        # 分组（根据新的评分心智：方向优先）
-        recommended = [p for p in projects if p.feasibility["total"] >= 65]  # 推荐项目（≥65分）
-        alternatives = [p for p in projects if p.feasibility["total"] < 65]  # 备选项目（<65分）
-        
-        # 进一步细分推荐项目
-        excellent = [p for p in recommended if p.feasibility["total"] >= 80]  # 优秀（≥80分）
-        good = [p for p in recommended if 65 <= p.feasibility["total"] < 80]  # 良好（65-79分）
+
+        push_threshold = stats.get("push_threshold", 65)
+        recommended = [p for p in projects if p.feasibility["total"] >= push_threshold]
+        alternatives = [p for p in projects if p.feasibility["total"] < push_threshold]
+
+        excellent = [p for p in recommended if p.feasibility["total"] >= 80]
+        good = [p for p in recommended if push_threshold <= p.feasibility["total"] < 80]
         
         # 生成报告
         report = []
@@ -57,41 +56,35 @@ class MarkdownReporter:
         report.append(f"> {' | '.join(summary_parts) if summary_parts else '暂无符合项目'}\n")
         report.append("---\n")
         
-        # 第一部分：推荐项目（≥65分）
+        # 第一部分：推荐项目（≥push_threshold分）
         if recommended:
-            report.append("## 🎯 推荐项目（评分 ≥ 65分）\n")
+            report.append(f"## 🎯 推荐项目（评分 ≥ {push_threshold}分）\n")
             report.append("> 方向高度匹配，优先关注\n\n")
-            
-            # 优秀项目（≥80分）
+
             if excellent:
                 report.append("### ⭐ 优秀项目（≥80分）\n")
                 for i, project in enumerate(excellent, 1):
                     report.append(self._format_project(i, project, detailed=True))
-            
-            # 良好项目（65-79分）
+
             if good:
-                report.append("### ✅ 良好项目（65-79分）\n")
+                report.append(f"### ✅ 良好项目（{push_threshold}-79分）\n")
                 for i, project in enumerate(good, 1):
                     report.append(self._format_project(i, project, detailed=True))
         
-        # 第二部分：备选项目（<65分）
+        # 第二部分：备选项目（<push_threshold分）
         if alternatives:
-            report.append("## 📌 备选项目（评分 < 65分）\n")
+            report.append(f"## 📌 备选项目（评分 < {push_threshold}分）\n")
             report.append("> 可作备选，建议人工复核\n\n")
             for i, project in enumerate(alternatives, 1):
                 report.append(self._format_alternative_project(i, project))
         
         # 统计信息
-        report.append(self._format_stats(stats))
+        report.append(self._format_stats(stats, push_threshold))
         
         # 页脚
         report.append(f"\n---\n\n*本报告由 TenderCopilot 自动生成 | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
         
         content = "\n".join(report)
-        
-        # 保存报告
-        self._save_report(content)
-        
         logger.success("✅ 日报生成完成")
         return content
     
@@ -128,9 +121,22 @@ class MarkdownReporter:
         bid_dl = getattr(item, "bid_deadline", "") or ""
         lines.append(f"⏳ 开标时间: {bid_dl.strip() or '未知'}")
 
-        # AI 评分
-        ai_score = getattr(item, "ai_score", 0) or feas.get("total", 0)
-        lines.append(f"🤖 AI评分: {ai_score}/100")
+        # AI 评分：真实总分来自 feasibility 动态规则引擎
+        total_score = feas.get("total")
+        if total_score is None:
+            total_score = getattr(item, "ai_score", 0) or 0
+        score_line = f"🤖 AI评分: {float(total_score):.1f}/100"
+        breakdown = feas.get("score_breakdown") or feas.get("score_details") or []
+        if breakdown:
+            parts = []
+            for b in breakdown[:4]:
+                rule = (b.get("rule") or b.get("name") or "").strip()
+                pts = b.get("points", b.get("score", 0))
+                if rule and "总计" not in rule and pts != 0:
+                    parts.append(f"{rule} {'+' if pts > 0 else ''}{pts}")
+            if parts:
+                score_line += f" ({', '.join(parts)})"
+        lines.append(score_line)
 
         # 链接
         if detailed and item.url:
@@ -166,31 +172,40 @@ class MarkdownReporter:
         else:
             return "⭐⭐⭐"
     
-    def _format_stats(self, stats):
+    def _format_stats(self, stats, push_threshold: int = 65):
         """格式化统计信息"""
         lines = []
         lines.append("## 📊 今日统计\n")
         lines.append(f"- **爬取公告总数**: {stats.get('total_crawled', 0)}")
         lines.append(f"- **初筛匹配数**: {stats.get('total_matched', 0)}")
-        lines.append(f"- **推荐项目**: {stats.get('recommended', 0)} 个（≥65分）")
+        lines.append(f"- **推荐项目**: {stats.get('recommended', 0)} 个（≥{push_threshold}分）")
         if stats.get('excellent', 0) > 0:
             lines.append(f"  - 优秀项目: {stats.get('excellent', 0)} 个（≥80分）")
         if stats.get('good', 0) > 0:
-            lines.append(f"  - 良好项目: {stats.get('good', 0)} 个（65-79分）")
+            lines.append(f"  - 良好项目: {stats.get('good', 0)} 个（{push_threshold}-79分）")
         if stats.get('alternatives', 0) > 0:
-            lines.append(f"- **备选项目**: {stats.get('alternatives', 0)} 个（<65分，可人工复核）")
+            lines.append(f"- **备选项目**: {stats.get('alternatives', 0)} 个（<{push_threshold}分，可人工复核）")
         lines.append("")
         return "\n".join(lines)
     
-    def _save_report(self, content):
-        """保存报告"""
+    def _save_report(self, content, earliest_str: str = "", latest_str: str = ""):
+        """保存报告到本地 .md 文件。可选插入精确时间区间（仅本地，不推送企微）。"""
         report_dir = Path('data/reports')
         report_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        # 在统计数据下方插入时间区间（仅写入本地 .md，不推送企微）
+        if earliest_str and latest_str:
+            date_range_line = f"\n> 📅 **本次抓取数据区间**: {earliest_str} 至 {latest_str}\n"
+            if "\n---\n" in content:
+                parts = content.split("\n---\n", 1)
+                content = parts[0] + date_range_line + "\n---\n" + (parts[1] if len(parts) > 1 else "")
+            else:
+                content = content + date_range_line
+
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = report_dir / f"daily_report_{timestamp}.md"
-        
+
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(content)
-        
+
         logger.info(f"💾 报告已保存: {filename}")

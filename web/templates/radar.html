@@ -7,11 +7,66 @@
   <div class="border border-gray-700 rounded-lg p-4 bg-gray-800">
     <h1 class="text-lg font-semibold text-gray-100 mb-2">🎯 追踪雷达</h1>
     <p class="text-sm text-gray-500 mb-4">已关注项目集中管理 · 点击「取消关注」可移除</p>
-    <div class="radar-content"
-         hx-get="/api/radar/html"
-         hx-trigger="load, every 30s"
-         hx-swap="innerHTML">
-      <p class="text-gray-500">加载中...</p>
+
+    <details class="mb-4 border border-gray-600 rounded-lg overflow-hidden">
+      <summary class="px-4 py-2.5 bg-gray-700/50 cursor-pointer hover:bg-gray-700/70 text-gray-200 font-medium select-none">
+        ➕ 手动录入外部项目
+      </summary>
+      <div class="p-4 bg-gray-800/50 border-t border-gray-600">
+        <form id="manual-form"
+              hx-post="/api/radar/manual_add"
+              hx-target="#radar-list"
+              hx-swap="afterbegin"
+              hx-on::after-request="if(event.detail.successful){this.reset(); var s=document.getElementById('manual-success'); s.textContent='✅ 录入成功'; s.classList.remove('invisible'); setTimeout(function(){ s.textContent=''; s.classList.add('invisible'); }, 3000); document.querySelector('#radar-list p.text-gray-500')?.remove();}"
+              class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="md:col-span-2">
+            <label class="block text-xs text-gray-400 mb-1">项目标题 <span class="text-red-400">*</span></label>
+            <input type="text" name="title" required
+                   class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                   placeholder="请输入项目标题">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">项目链接</label>
+            <input type="url" name="url"
+                   class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                   placeholder="https://...">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">预算金额</label>
+            <input type="text" name="budget"
+                   class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                   placeholder="如：50万">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">截止/开标时间</label>
+            <input type="text" name="deadline"
+                   class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                   placeholder="如：2025-03-15">
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-gray-400 mb-1">关键备注</label>
+            <input type="text" name="notes"
+                   class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                   placeholder="替代摘要展示">
+          </div>
+          <div class="md:col-span-2 flex justify-end items-center gap-2">
+            <span id="manual-success" class="text-green-400 text-sm invisible"></span>
+            <button type="submit"
+                    class="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium">
+              💾 保存并追踪
+            </button>
+          </div>
+        </form>
+      </div>
+    </details>
+
+    <div class="radar-content">
+      <div id="radar-list" class="grid gap-3"
+           hx-get="/api/radar/html"
+           hx-trigger="load, every 30s"
+           hx-swap="innerHTML">
+        <p class="text-gray-500 col-span-full py-8 text-center">加载中...</p>
+      </div>
     </div>
   </div>
 {% endblock %}

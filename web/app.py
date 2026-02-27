@@ -9,19 +9,32 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from web.api import reports, run as run_api, config as config_api, history, logs as logs_api, intel as intel_api, scheduler as scheduler_api, lab as lab_api, radar as radar_api, stats as stats_api, system as system_api
+from web.scheduler_engine import start_scheduler, shutdown_scheduler
 
 templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时启动调度器，关闭时关闭。"""
+    start_scheduler()
+    yield
+    shutdown_scheduler()
+
 
 app = FastAPI(
     title="TenderCopilot",
     description="招标项目智能助手 - Web 操作界面",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS for local dev (optional)

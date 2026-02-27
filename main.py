@@ -196,8 +196,8 @@ class TenderCopilot:
                 # 传递数据库管理器用于去重
                 crawl_config = self.config.get('crawl_strategy', {})
                 max_pages = crawl_config.get('max_pages')  # None = 不限制页数
-                max_consecutive = crawl_config.get('max_consecutive_exists', 5)  # 连续5条重复停止
-                max_total_items = crawl_config.get('max_total_items', 300)  # 保护性上限
+                max_consecutive = crawl_config.get('max_consecutive_exists', 15)  # 连续重复熔断阈值
+                max_total_items = crawl_config.get('max_total_items', 1000)  # 单次硬性抓取上限
                 warn_threshold = crawl_config.get('warn_threshold', 200)  # 警告阈值
                 
                 all_announcements = self.spider.fetch_announcements(
@@ -235,8 +235,14 @@ class TenderCopilot:
             
             if not all_announcements:
                 logger.warning("⚠️ 未爬取到任何新公告，流程结束")
+                logger.info("=" * 44)
+                logger.info("本次未抓取到新数据，系统已熔断或暂无更新。")
+                logger.info("=" * 44)
                 stats = {"total_crawled": 0, "total_matched": 0, "recommended": 0, "message": "未爬取到新公告"}
                 return stats
+
+            # 首尾详情探测：抓取最新/最旧两条的详情页以提取精确时间（HH:mm）
+            earliest_str, latest_str = self._get_precise_pub_date_range(all_announcements)
             
             # 步骤4: 本地关键词筛选+地域检查
             logger.info("🔍 步骤 4/7: 本地关键词筛选+地域检查")
@@ -250,21 +256,22 @@ class TenderCopilot:
             self.deep_analyze_projects(filtered)
             
             # 步骤6: 分析结果分层（推荐+备选）
+            push_threshold = self.config.get('scoring', {}).get('push_threshold', 65)
             logger.info("🎯 步骤 6/7: 结果分层（推荐项目 + 备选项目）")
-            recommended = [p for p in filtered if p.feasibility['total'] >= 65]  # 推荐项目（与报告阈值一致）
-            alternatives = [p for p in filtered if p.feasibility['total'] < 65]   # 备选项目
-            
-            logger.info(f"  ✅ 推荐项目: {len(recommended)} 个（评分≥65分）")
+            recommended = [p for p in filtered if p.feasibility['total'] >= push_threshold]
+            alternatives = [p for p in filtered if p.feasibility['total'] < push_threshold]
+
+            logger.info(f"  ✅ 推荐项目: {len(recommended)} 个（评分≥{push_threshold}分）")
             if len(recommended) > 0:
                 excellent = sum(1 for p in recommended if p.feasibility['total'] >= 80)
                 good = len(recommended) - excellent
                 if excellent > 0:
                     logger.info(f"     - 优秀: {excellent} 个（≥80分）")
                 if good > 0:
-                    logger.info(f"     - 良好: {good} 个（65-79分）")
-            
+                    logger.info(f"     - 良好: {good} 个（{push_threshold}-79分）")
+
             if alternatives:
-                logger.info(f"  📌 备选项目: {len(alternatives)} 个（评分<65分，可人工复核）")
+                logger.info(f"  📌 备选项目: {len(alternatives)} 个（评分<{push_threshold}分，可人工复核）")
             
             # 步骤7: 生成报告并推送（包含所有项目）
             logger.info("📝 步骤 7/7: 生成报告并推送通知")
@@ -273,14 +280,17 @@ class TenderCopilot:
                 'total_matched': len(filtered),
                 'recommended': len(recommended),
                 'excellent': sum(1 for p in recommended if p.feasibility['total'] >= 80),
-                'good': sum(1 for p in recommended if 65 <= p.feasibility['total'] < 80),
-                'alternatives': len(alternatives)
+                'good': sum(1 for p in recommended if push_threshold <= p.feasibility['total'] < 80),
+                'alternatives': len(alternatives),
+                'push_threshold': push_threshold,
             }
             
-            # 生成包含所有项目的报告
+            # 生成包含所有项目的报告（不含时间区间，推送渠道不包含）
             report = self.reporter.generate_daily_report(filtered, stats)
+            # 保存到 .md 时插入精确时间区间（仅本地报告，不推送企微）
+            self.reporter._save_report(report, earliest_str=earliest_str, latest_str=latest_str)
             
-            # 推送通知（静音模式下仅打印）
+            # 推送通知（静音模式下仅打印，推送内容不含时间区间）
             if mute_notify:
                 logger.info("📤 [静音] 拦截企微推送，报告内容如下：")
                 logger.info("-" * 40)
@@ -303,7 +313,17 @@ class TenderCopilot:
             logger.info(f"  今日爬取: {crawl_stats.get('today_crawls', 0)} 次")
             logger.info(f"  上次爬取: {crawl_stats.get('last_crawl_time', 'N/A')}")
             logger.info("=" * 60)
-            
+
+            # 本次抓取战报：数量 + 精确数据时间区间（HH:mm）
+            logger.info("=" * 44)
+            logger.info("================ 本次抓取战报 ================")
+            logger.info(f"✅ 新增抓取数量: {len(all_announcements)} 条")
+            if earliest_str and latest_str:
+                logger.info(f"📅 数据时间区间: {earliest_str} 至 {latest_str}")
+            else:
+                logger.info("📅 数据时间区间: (部分公告无有效发布日期)")
+            logger.info("=" * 44)
+
             logger.success("✅ 流程执行完成")
             return stats
             
@@ -317,6 +337,99 @@ class TenderCopilot:
                 self.spider.close()
         return stats
     
+    def _extract_precise_time_from_content(self, text: str):
+        """从 content_raw 或网页源码中正则提取精确时间 YYYY-MM-DD HH:mm。
+
+        支持格式：YYYY-MM-DD HH:mm、YYYY-MM-DD HH:mm:ss、YYYY年MM月DD日 HH:mm 等。
+        """
+        import re
+        from datetime import datetime
+        if not text or not str(text).strip():
+            return None
+        text = str(text)
+        patterns = [
+            (r'(\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)', ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M']),
+            (r'(\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}(?::\d{2})?)', None),
+        ]
+        for pat, fmts in patterns:
+            m = re.search(pat, text)
+            if m:
+                raw = m.group(1).strip()
+                if fmts:
+                    for fmt in fmts:
+                        try:
+                            dt = datetime.strptime(raw[:19], fmt)
+                            return dt.strftime('%Y-%m-%d %H:%M')
+                        except ValueError:
+                            continue
+                if re.match(r'\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}', raw):
+                    return raw[:16] if len(raw) >= 16 else raw
+                if '年' in raw:
+                    nums = re.findall(r'\d+', raw)
+                    if len(nums) >= 5:
+                        try:
+                            return f"{nums[0]}-{nums[1].zfill(2)}-{nums[2].zfill(2)} {nums[3].zfill(2)}:{nums[4].zfill(2)}"
+                        except (IndexError, ValueError):
+                            pass
+        return None
+
+    def _get_precise_pub_date_range(self, announcements) -> tuple:
+        """获取精确到 HH:mm 的发布日期区间。通过抓取首尾两条详情页提取。"""
+        if not announcements or len(announcements) < 1:
+            return '', ''
+        first_item = announcements[0]
+        last_item = announcements[-1] if len(announcements) > 1 else first_item
+
+        latest_str = None
+        earliest_str = None
+
+        if self.spider:
+            try:
+                logger.info("  📅 获取首尾详情以提取精确时间...")
+                self.spider.fetch_detail(first_item)
+                content_first = getattr(first_item, 'content_raw', '') or (first_item.get('content_raw', '') if hasattr(first_item, 'get') else '')
+                latest_str = self._extract_precise_time_from_content(content_first)
+                if first_item is not last_item:
+                    self.spider.fetch_detail(last_item)
+                    content_last = getattr(last_item, 'content_raw', '') or (last_item.get('content_raw', '') if hasattr(last_item, 'get') else '')
+                    earliest_str = self._extract_precise_time_from_content(content_last)
+                else:
+                    earliest_str = latest_str
+            except Exception as e:
+                logger.warning(f"  ⚠️ 首尾详情时间提取失败: {e}，回退到列表日期")
+
+        if not latest_str or not earliest_str:
+            return self._get_pub_date_range(announcements)
+        return earliest_str, latest_str
+
+    def _get_pub_date_range(self, announcements):
+        """提取公告列表的发布日期区间（最早～最晚）
+
+        Args:
+            announcements: 公告列表（TenderItem 或 dict）
+
+        Returns:
+            tuple: (earliest_str, latest_str)，无有效日期时返回 ('', '')
+        """
+        from src.utils import DateParser
+
+        parsed = []
+        for ann in announcements:
+            raw = ann.get('publish_date', '') or ann.get('pub_date', '') if hasattr(ann, 'get') else (getattr(ann, 'publish_date', '') or getattr(ann, 'pub_date', ''))
+            if not raw:
+                continue
+            dt = DateParser.parse(str(raw).strip())
+            if dt:
+                parsed.append(dt)
+
+        if not parsed:
+            return '', ''
+        earliest = min(parsed)
+        latest = max(parsed)
+        has_time = any(d.hour != 0 or d.minute != 0 for d in parsed)
+        fmt = '%Y-%m-%d %H:%M' if has_time else '%Y-%m-%d'
+        return earliest.strftime(fmt), latest.strftime(fmt)
+
     def _is_new_announcement(self, announcement, last_crawl_time):
         """判断公告是否是新的（发布时间晚于上次爬取时间）
         

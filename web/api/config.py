@@ -116,6 +116,9 @@ def get_config():
     if "email" in (notifications or {}):
         notifications["email"] = dict(notifications["email"])
         notifications["email"]["sender_password"] = "已配置" if env_configured.get("EMAIL_PASSWORD") else "未配置"
+    s = (settings or {}).setdefault("scoring", {})
+    if "push_threshold" not in s:
+        s["push_threshold"] = 65
     return {
         "settings": settings or {},
         "business_directions": business.get("business_directions", business) if isinstance(business, dict) else {},
@@ -152,6 +155,16 @@ def _deep_merge(base: Dict, update: Dict, placeholders: Tuple[str, ...] = MASKED
     return out
 
 
+def _reload_scheduler():
+    """配置保存后触发热重载定时任务。"""
+    try:
+        from web.scheduler_engine import reload_scheduler
+        reload_scheduler()
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"⏰ 定时任务热重载失败: {e}")
+
+
 @router.put("")
 def put_config(payload: Dict[str, Any]):
     """Update config. Merges payload into existing files; writes env to .env when provided."""
@@ -161,7 +174,11 @@ def put_config(payload: Dict[str, Any]):
         path = CONFIG_DIR / "settings.yaml"
         existing = _load_yaml(path)
         existing = _deep_merge(existing, payload["settings"])
+        s = existing.setdefault("scoring", {})
+        if "push_threshold" not in s:
+            s["push_threshold"] = 65
         _save_yaml(path, existing)
+        _reload_scheduler()
     if "business_directions" in payload:
         path = CONFIG_DIR / "business_directions.yaml"
         existing = _load_yaml(path)
