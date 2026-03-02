@@ -255,6 +255,27 @@ class FeasibilityScorer:
                 total += score_val
                 score_breakdown.append({"rule": f"命中自定义规则 [{name}]", "points": score_val})
 
+        # 9. AI 精排一票否决/奖励（双重漏斗：粗排后由 AI 深度阅读判断业务真实性）
+        if ai_extracted is not None and "ai_match_score" in ai_extracted:
+            ai_score = ai_extracted.get("ai_match_score", 60)
+            ai_reason = ai_extracted.get("ai_match_reason", "未提供理由")
+            try:
+                ai_score = max(0, min(100, int(float(ai_score))))
+            except (TypeError, ValueError):
+                ai_score = 60
+            if ai_score < 50:
+                penalty = -100
+                total += penalty
+                score_breakdown.append(
+                    {"rule": f"❌ AI深度否决 ({ai_reason})", "points": penalty}
+                )
+            elif ai_score >= 85:
+                bonus = 15
+                total += bonus
+                score_breakdown.append(
+                    {"rule": f"🎯 AI高度推荐 ({ai_reason})", "points": bonus}
+                )
+
         final_total = max(-100, min(100, round(total, 1)))
         score_breakdown.append({"rule": "🏆 总计", "points": final_total})
 

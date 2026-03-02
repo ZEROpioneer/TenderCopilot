@@ -435,91 +435,136 @@ class PLAPSpider:
 
         支持 TenderItem（新）或 dict（兼容旧调用方）。若传入 TenderItem，则原地更新并返回；
         若传入 dict，则返回 {'content': ..., 'attachments': ...} 以保持向后兼容。
+
+        加固逻辑：强等待正文 DOM、空内容重试、抓取后随机休眠防反爬。
         """
         url = item.url if isinstance(item, TenderItem) else item.get('url', '')
+        project_id = item.project_id if isinstance(item, TenderItem) else item.get('id', '')
         if not url:
-            return item if isinstance(item, TenderItem) else {'content': '', 'attachments': []}
+            return item if isinstance(item, TenderItem) else {'content': '', 'attachments': [], 'has_attachments': False}
 
         logger.debug(f"  🔍 爬取详情: {url[:60]}...")
-        
-        try:
-            self.page.get(url)
-            time.sleep(self.wait_page_refresh)
-            
-            content = ''
+
+        def _extract_content() -> str:
+            """从当前页面提取正文，返回空字符串表示失败。"""
+            content = ""
             selectors = [
-                'css:.content',
-                'css:.detail',
-                'css:.detail-content',
-                'css:.article',
-                'css:.main-content',
-                'css:[class*="content"]',
-                'css:[class*="detail"]',
-                'css:article',
-                'tag:article',
+                "css:.content",
+                "css:.detail",
+                "css:.detail-content",
+                "css:.article",
+                "css:.main-content",
+                "css:[class*='content']",
+                "css:[class*='detail']",
+                "css:article",
+                "tag:article",
             ]
-            
             for selector in selectors:
                 try:
                     content_ele = self.page.ele(selector, timeout=0.5)
                     if content_ele:
-                        content = content_ele.text
+                        content = (content_ele.text or "").strip()
                         if len(content) > 50:
                             logger.debug(f"  ✅ 使用选择器: {selector}, 内容长度: {len(content)}")
-                            break
-                except:
+                            return content
+                except Exception:
                     continue
-            
             if not content or len(content) < 50:
                 try:
-                    body = self.page.ele('tag:body', timeout=1)
+                    body = self.page.ele("tag:body", timeout=1)
                     if body:
-                        content = body.text
+                        content = (body.text or "").strip()
                         logger.debug(f"  ⚠️ 使用body文本, 内容长度: {len(content)}")
-                except:
-                    logger.warning(f"  ⚠️ 无法提取详情内容")
-            
+                except Exception:
+                    pass
+            return content or ""
+
+        try:
+            self.page.get(url)
+            # 强等待：正文核心元素加载完成，避免 DOM 未渲染即提取
+            try:
+                self.page.wait.ele_displayed("css:.content", timeout=5)
+            except Exception:
+                try:
+                    self.page.wait.ele_displayed("css:.detail", timeout=3)
+                except Exception:
+                    pass
+            time.sleep(self.wait_page_refresh)
+
+            content = _extract_content()
+            # 容错重试：第一次为空则等 2 秒再提取一次
+            if not content or len(content) < 50:
+                logger.debug("  ⏳ 首次提取为空，等待 2 秒后重试...")
+                time.sleep(2)
+                content = _extract_content()
+
             attachments = self._extract_attachments()
-            
+            has_attachments = self._detect_has_attachments(attachments)
+
+            # 抓取后随机休眠，模拟真人阅读，防反爬限流
+            time.sleep(random.uniform(1.5, 3.0))
+
             if isinstance(item, TenderItem):
-                item.content_raw = content or ''
+                item.content_raw = content or ""
                 item.attachments = attachments or []
+                item.has_attachments = has_attachments
+                if not (content or "").strip():
+                    logger.error(
+                        f"❌ [详情抓取失败] 项目ID: {project_id}, 网址: {url}, "
+                        "原因: 页面加载超时或正文选择器失效"
+                    )
                 return item
-            return {'content': content or '', 'attachments': attachments or []}
-            
+            if not (content or "").strip():
+                logger.error(
+                    f"❌ [详情抓取失败] 项目ID: {project_id}, 网址: {url}, "
+                    "原因: 页面加载超时或正文选择器失效"
+                )
+            return {
+                "content": content or "",
+                "attachments": attachments or [],
+                "has_attachments": has_attachments,
+            }
+
         except Exception as e:
             logger.warning(f"  ❌ 爬取详情失败: {e}")
             if isinstance(item, TenderItem):
-                item.content_raw = ''
+                item.content_raw = ""
                 item.attachments = []
+                item.has_attachments = False
+                logger.error(
+                    f"❌ [详情抓取失败] 项目ID: {project_id}, 网址: {url}, 原因: {e}"
+                )
                 return item
-            return {'content': '', 'attachments': []}
+            return {"content": "", "attachments": [], "has_attachments": False}
     
+    _ATTACHMENT_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar")
+
     def _extract_attachments(self):
         """提取附件链接"""
         attachments = []
-        
         try:
-            attachment_links = self.page.eles('tag:a')
-            
-            for link in attachment_links:
-                href = link.attr('href')
-                text = link.text.strip()
-                
-                # 判断是否为附件
-                if href and any(ext in href.lower() for ext in ['.pdf', '.doc', '.docx']):
-                    # 补全URL
-                    if not href.startswith('http'):
+            for link in self.page.eles("tag:a"):
+                href = link.attr("href") or ""
+                text = (link.text or "").strip()
+                if href and any(ext in href.lower() for ext in self._ATTACHMENT_EXTENSIONS):
+                    if not href.startswith("http"):
                         href = self.base_url + href
-                    
-                    attachments.append({
-                        'name': text or '附件',
-                        'url': href
-                    })
+                    attachments.append({"name": text or "附件", "url": href})
         except Exception as e:
             logger.debug(f"提取附件失败: {e}")
-        
         return attachments
+
+    def _detect_has_attachments(self, attachments: list) -> bool:
+        """侦测详情页是否存在附件（链接 + 正文「附件」字样）。军采网下载需登录，仅做布尔判断。"""
+        if attachments:
+            return True
+        try:
+            html = (self.page.html or "").lower()
+            if "附件" in html:
+                return True
+        except Exception:
+            pass
+        return False
     
     def _generate_id(self, title, date):
         """生成唯一ID"""

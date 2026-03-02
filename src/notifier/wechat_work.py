@@ -149,6 +149,9 @@ class WechatWorkNotifier:
         bid_dl = getattr(item, "bid_deadline", "") or ""
         lines.append(f"⏳ 开标时间: {(bid_dl or '').strip() or '未知'}")
 
+        has_att = getattr(item, "has_attachments", False) or (item.get("has_attachments") if hasattr(item, "get") else False)
+        lines.append("📎 附件: 有 (请登录军采网查看/下载)" if has_att else "📎 附件: 无")
+
         # 真实总分来自 feasibility 动态规则引擎，ai_score 仅作兜底
         total_score = feas.get("total")
         if total_score is None:

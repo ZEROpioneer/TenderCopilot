@@ -40,6 +40,7 @@ class TenderItem:
     summary: str = ""
     crawled_at: str = ""
     attachments: List[Dict[str, Any]] = field(default_factory=list)
+    has_attachments: bool = False  # 详情页是否存在附件（军采网需登录下载，仅做布尔侦测）
 
     # ---------- 数据库兼容字段（announcements 表）----------
     budget: Optional[str] = None
@@ -96,7 +97,7 @@ class TenderItem:
     _DICT_KEYS = frozenset({
         "id", "project_id", "title", "url", "publish_date", "pub_date",
         "notice_type_raw", "notice_type", "location", "content", "content_raw",
-        "summary", "attachments", "crawled_at", "budget", "deadline", "contact",
+        "summary", "attachments", "has_attachments", "crawled_at", "budget", "deadline", "contact",
     })
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -115,6 +116,7 @@ class TenderItem:
             "content_raw": self.content_raw,
             "summary": self.summary,
             "attachments": self.attachments,
+            "has_attachments": self.has_attachments,
             "crawled_at": self.crawled_at,
             "budget": self.budget,
             "deadline": self.deadline,
@@ -150,6 +152,7 @@ class TenderItem:
             summary=d.get("summary", ""),
             crawled_at=d.get("crawled_at", ""),
             attachments=d.get("attachments", []),
+            has_attachments=d.get("has_attachments", False),
             budget=d.get("budget"),
             deadline=d.get("deadline"),
             contact=d.get("contact"),

@@ -614,6 +614,7 @@ class TenderCopilot:
                 ]:
                     val = getattr(project, key, None) or to_save.get(key)
                     to_save[key] = (val or "").strip() or default
+                to_save["has_attachments"] = getattr(project, "has_attachments", False)
                 self.db.save_analysis_result(project.project_id, to_save, 0.8)
 
             # 高分项目加入追踪名单（智能追踪：后续更正/流标等只提醒已关注项目）
@@ -669,50 +670,21 @@ class TenderCopilot:
             return project
     
     def deep_analyze_projects(self, projects):
-        """深度分析项目（并发版：内容+AI+附件+评分）
-        
+        """深度分析项目（串行版：避免 DrissionPage 多线程 Tab 抢占）
+
+        DrissionPage 操控单例浏览器，多线程下极易发生 Tab 抢占与 DOM 未渲染即提取，
+        导致详情页 content_raw 为空。改为单线程 for 循环串行抓取，确保稳定。
+
         Args:
             projects: 项目列表
         """
         if not projects:
             return
-        
-        # 获取并发配置
-        max_workers = self.config.get('spider', {}).get('max_concurrent_details', 3)
-        
-        # 如果只有1-2个项目，不启用并发
-        if len(projects) <= 2:
-            logger.info(f"项目数量少（{len(projects)}个），使用串行处理")
-            for i, project in enumerate(projects, 1):
-                self._analyze_single_project((i, len(projects), project))
-            return
-        
-        # 并发处理多个项目
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
-        logger.info(f"启用并发分析（{max_workers} 个工作线程）")
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_to_project = {
-                executor.submit(
-                    self._analyze_single_project, 
-                    (i, len(projects), project)
-                ): project 
-                for i, project in enumerate(projects, 1)
-            }
-            
-            # 收集结果
-            completed = 0
-            for future in as_completed(future_to_project):
-                try:
-                    result = future.result()
-                    completed += 1
-                except Exception as e:
-                    logger.error(f"并发分析异常: {e}")
-                    completed += 1
-            
-            logger.info(f"✅ 并发分析完成：{completed}/{len(projects)} 个项目")
+
+        logger.info(f"串行分析 {len(projects)} 个项目（详情页单线程抓取，避免 Tab 抢占）")
+        for i, project in enumerate(projects, 1):
+            self._analyze_single_project((i, len(projects), project))
+        logger.info(f"✅ 深度分析完成：{len(projects)} 个项目")
     
     def start_scheduler(self):
         """启动定时任务（当 scheduler.enabled 为 true 时）"""

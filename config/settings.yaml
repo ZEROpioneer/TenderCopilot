@@ -61,7 +61,7 @@ analyzer:
   fallback_to_rules: true
   custom_base_url: https://open.bigmodel.cn/api/paas/v4
   custom_api_key: ${CUSTOM_OPENAI_API_KEY}
-  custom_model: glm-4-flash
+  custom_model: glm-4-air
 deep_analysis:
   enabled: true
   analyze_content: true

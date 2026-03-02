@@ -23,35 +23,17 @@ _DEFAULT_EXTRACTED = {
     "contact_info": "未知",
     "doc_claim_method": "未知",
     "bid_method": "未知",
+    "ai_match_score": 60,
+    "ai_match_reason": "未提供理由",
 }
 
 
 class InfoExtractor:
     """招标信息提取器（精准提取 4 大核心要素）"""
 
-    EXTRACTION_PROMPT = """你是一个专业的军队采购招投标分析师。请阅读以下招标公告，并提取关键信息。
-你必须返回一个合法的 JSON 字符串，包含以下字段，不要输出任何 Markdown 标记：
-
-{{
-  "score": 85,
-  "confidentiality_req": "提取是否需要保密资质（如：三级保密资质、不需要、未提及）",
-  "project_summary": "用20个字以内概括核心采购内容",
-  "doc_deadline": "提取报名或获取招标文件的完整时间段。必须包含开始日期、截止日期，以及每天的具体工作时间段（例如：'2026-02-26至3-03，每日08:00-11:30, 14:00-17:00'）。不要啰嗦，精简格式，未提及填'未知'",
-  "bid_deadline": "提取开标或递交响应文件的准确截止时间。未提及填'未知'",
-  "budget_info": "提取项目预算或最高限价。未提及填'未公布'",
-  "bid_location": "提取开标地点或递交响应文件的具体地址。未提及填'未知'。",
-  "contact_info": "提取采购单位或代理机构的联系人姓名及电话（如：李先生 18900973393）。未提及填'未知'。",
-  "doc_claim_method": "提取招标文件申领/报名方式。⚠️注意防坑：很多公告会在第五条写'线下申领'，但紧接着在后面的'其他补充事宜'中要求'发送电子邮件'或网传材料。请你务必通读全文综合判断！准确提取是'现场线下'、'指定邮箱邮件申领'还是'系统线上'。如果有要求发邮件，请务必把邮箱地址一起提取出来（例如：'邮件申领 (cgb80822629@163.com)'）。",
-  "bid_method": "提取开标方式或递交方式（如：线下现场开标、线上开标、邮寄递交等）。未提及填'未知'。"
-}}
-
-招标公告内容：
-{content}
-
-请只返回 JSON，不要有其他内容。"""
-    
     def __init__(self, config):
-        analyzer_cfg = config['analyzer']
+        self.config = config
+        analyzer_cfg = config.get("analyzer", {})
         # provider: openai / gemini / custom_openai / none
         self.provider = analyzer_cfg.get('provider', 'openai')
         self.api_key = analyzer_cfg.get('api_key') or analyzer_cfg.get('openai_api_key', '')
@@ -99,6 +81,81 @@ class InfoExtractor:
             logger.info("提示: 需要安装 google-generativeai，运行: pip install google-generativeai")
             self.client = None
     
+    def _get_user_include_rules(self) -> str:
+        """从配置中聚合用户【关注规则】（必须满足的关键词）。"""
+        rules = []
+        directions = self.config.get("business_directions", {}) or {}
+        for _did, d in (directions or {}).items():
+            if isinstance(d, dict):
+                rules.extend(d.get("keywords_include", []))
+        custom = self.config.get("scoring_config", {}) or self.config.get("scoring", {}) or {}
+        for r in custom.get("custom_rules", []) or []:
+            if isinstance(r, dict) and r.get("field") == "title":
+                val = r.get("value", "")
+                if val:
+                    rules.append(str(val).strip())
+        rules = list(dict.fromkeys(str(x).strip() for x in rules if x))
+        return "、".join(rules) if rules else "模拟训练、AR/VR、软件开发"
+
+    def _get_user_exclude_rules(self) -> str:
+        """从配置中聚合用户【排斥规则】（绝对不能有的关键词）。"""
+        rules = []
+        global_ex = self.config.get("global_exclude", {}) or {}
+        rules.extend(global_ex.get("keywords", []) or [])
+        directions = self.config.get("business_directions", {}) or {}
+        for _did, d in (directions or {}).items():
+            if isinstance(d, dict):
+                rules.extend(d.get("keywords_exclude", []) or [])
+        rules = list(dict.fromkeys(str(x).strip() for x in rules if x))
+        return "、".join(rules) if rules else "无特殊排斥"
+
+    def _build_system_prompt(self, user_include_rules: str, user_exclude_rules: str) -> str:
+        """构建【用户规则约束】型 System Prompt（指令执行模式，禁止发散）。"""
+        return (
+            "你是一个极其精准的语义映射引擎。你的唯一任务是：严格按照用户提供的【关注规则】和【排斥规则】审查文本。\n"
+            f"【用户的关注规则（必须满足）】：{user_include_rules}\n"
+            f"【用户的排斥规则（绝对不能有）】：{user_exclude_rules}\n"
+            "【你的核心工作机制】：\n"
+            "1. 极度克制：你只能围绕上述两条规则进行工作。原文中任何不在规则内的要求（如：必须是国企、无外资、注册资金等），你必须视而不见，绝对不要将其视为限制或重点！\n"
+            "2. 智能语义泛化：你必须对用户的规则进行同义词扩展。\n"
+            '   - 例如：如果用户排斥规则里有「保密」，你必须能识别出原文中的「涉密」、「机密」、「武器装备科研生产保密资格」并触发排斥警告。\n'
+            '   - 例如：如果用户关注规则里有「AR」，你需要能识别「增强现实」。\n'
+            "只返回合法 JSON，不要输出任何 Markdown 标记。"
+        )
+
+    def _build_extraction_prompt(
+        self, content: str, user_include_rules: str, user_exclude_rules: str
+    ) -> str:
+        """构建带用户规则约束的 User Prompt（含 schema）。"""
+        project_summary_desc = (
+            "一句话概括核心采购内容。注意：如果原文触碰了用户的【排斥规则】（及其语义上的同义词），请在末尾加上【⚠️限制: 触碰排斥规则-具体原因】。"
+            "如果原文符合规则，绝不输出任何警告标签！严禁输出用户规则之外的任何限制条件！"
+        )
+        return f"""请阅读以下招标公告，并提取关键信息。
+你必须返回一个合法的 JSON 字符串，包含以下字段，不要输出任何 Markdown 标记：
+
+{{
+  "score": 85,
+  "confidentiality_req": "精准提炼硬性资质门槛（如二级保密、GJB9001C等）。忽略常规的'独立法人'等废话，只提取最核心的业务资质。未提及填'未提及'。",
+  "project_summary": "{project_summary_desc}",
+  "doc_deadline": "提取报名或获取招标文件的完整时间段。必须包含开始日期、截止日期，以及每天的具体工作时间段（例如：'2026-02-26至3-03，每日08:00-11:30, 14:00-17:00'）。不要啰嗦，精简格式，未提及填'未知'",
+  "bid_deadline": "项目的开标、评审、谈判、磋商或响应文件递交截止的具体时间点。格式需标准（如 YYYY-MM-DD HH:mm）。注意语义等价提取（如原文写'评审时间'即等价于开标时间）。未提及填'未知'",
+  "budget_info": "提取项目预算或最高限价。未提及填'未公布'",
+  "bid_location": "提取开标地点或递交响应文件的具体地址。未提及填'未知'。",
+  "contact_info": "提取采购单位或代理机构的联系人姓名及电话（如：李先生 18900973393）。未提及填'未知'。",
+  "doc_claim_method": "提取招标文件申领/报名方式。⚠️注意防坑：很多公告会在第五条写'线下申领'，但紧接着在后面的'其他补充事宜'中要求'发送电子邮件'或网传材料。请你务必通读全文综合判断！准确提取是'现场线下'、'指定邮箱邮件申领'还是'系统线上'。如果有要求发邮件，请务必把邮箱地址一起提取出来（例如：'邮件申领 (cgb80822629@163.com)'）。",
+  "bid_method": "提取开标方式或递交方式（如：线下现场开标、线上开标、邮寄递交等）。未提及填'未知'。",
+  "ai_match_score": 85,
+  "ai_match_reason": "给出 AI 匹配打分的简要理由，例如：'高度相关：明确涉及VR模拟器研发'，或 '毫不相关：实为营房修缮工程，VGBAAR仅为随机编号'。"
+}}
+
+注意：ai_match_score 为整数 0-100。根据用户关注规则【{user_include_rules}】打分。毫不相关（营房修缮、食品采购、项目编号巧合）打 0-30，高度吻合打 80-100。
+
+招标公告内容：
+{content}
+
+请只返回 JSON，不要有其他内容。"""
+
     def _init_custom_openai(self):
         """初始化自定义 OpenAI 兼容接口（仅检查配置，不创建客户端实例）"""
         if not self.custom_base_url or not self.custom_api_key:
@@ -153,6 +210,12 @@ class InfoExtractor:
         contact_info = _str(result.get("contact_info"), _DEFAULT_EXTRACTED["contact_info"])
         doc_claim_method = _str(result.get("doc_claim_method"), _DEFAULT_EXTRACTED["doc_claim_method"])
         bid_method = _str(result.get("bid_method"), _DEFAULT_EXTRACTED["bid_method"])
+        ai_match_score = result.get("ai_match_score", _DEFAULT_EXTRACTED["ai_match_score"])
+        try:
+            ai_match_score = max(0, min(100, int(float(ai_match_score))))
+        except (TypeError, ValueError):
+            ai_match_score = _DEFAULT_EXTRACTED["ai_match_score"]
+        ai_match_reason = _str(result.get("ai_match_reason"), _DEFAULT_EXTRACTED["ai_match_reason"])
 
         if item is not None:
             item.ai_score = score_val
@@ -177,6 +240,8 @@ class InfoExtractor:
             "contact_info": contact_info,
             "doc_claim_method": doc_claim_method,
             "bid_method": bid_method,
+            "ai_match_score": ai_match_score,
+            "ai_match_reason": ai_match_reason,
         }
 
     def _ensure_client_for_force(self) -> bool:
@@ -272,11 +337,15 @@ class InfoExtractor:
     def _extract_openai(self, content: str, item: Optional["TenderItem"] = None) -> Optional[dict]:
         """使用 OpenAI 提取"""
         try:
+            user_include = self._get_user_include_rules()
+            user_exclude = self._get_user_exclude_rules()
+            system_prompt = self._build_system_prompt(user_include, user_exclude)
+            user_prompt = self._build_extraction_prompt(content[:12000], user_include, user_exclude)
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是专业的军队采购招投标分析师，只返回合法 JSON。"},
-                    {"role": "user", "content": self.EXTRACTION_PROMPT.format(content=content[:12000])}
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.3,
                 response_format={"type": "json_object"}
@@ -304,7 +373,11 @@ class InfoExtractor:
     def _extract_gemini(self, content: str, item: Optional["TenderItem"] = None) -> Optional[dict]:
         """使用 Gemini 提取"""
         try:
-            prompt = self.EXTRACTION_PROMPT.format(content=content[:30000])
+            user_include = self._get_user_include_rules()
+            user_exclude = self._get_user_exclude_rules()
+            system_prompt = self._build_system_prompt(user_include, user_exclude)
+            user_prompt = self._build_extraction_prompt(content[:30000], user_include, user_exclude)
+            prompt = f"{system_prompt}\n\n{user_prompt}"
             response = self.client.generate_content(
                 prompt,
                 generation_config={'temperature': 0.3, 'max_output_tokens': 2048}
@@ -334,11 +407,15 @@ class InfoExtractor:
         """使用自定义 OpenAI 兼容接口提取"""
         try:
             url = f"{self.custom_base_url}/chat/completions"
+            user_include = self._get_user_include_rules()
+            user_exclude = self._get_user_exclude_rules()
+            system_prompt = self._build_system_prompt(user_include, user_exclude)
+            user_prompt = self._build_extraction_prompt(content[:12000], user_include, user_exclude)
             payload = {
                 "model": self.custom_model,
                 "messages": [
-                    {"role": "system", "content": "你是专业的军队采购招投标分析师，只返回合法 JSON。"},
-                    {"role": "user", "content": self.EXTRACTION_PROMPT.format(content=content[:12000])},
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ],
                 "temperature": 0.3,
                 "max_tokens": 2000,
